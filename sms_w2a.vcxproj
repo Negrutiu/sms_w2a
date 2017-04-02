@@ -189,6 +189,7 @@
     <ClInclude Include="Resource.h" />
     <ClInclude Include="SmsConvert.h" />
     <ClInclude Include="StdAfx.h" />
+    <ClInclude Include="Utils.h" />
   </ItemGroup>
   <ItemGroup>
     <Xml Include="res\Compatibility.xml" />

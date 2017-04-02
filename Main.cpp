@@ -56,6 +56,46 @@ LPCTSTR DialogTitle( _In_ HWND hDlg )
 }
 
 
+//++ GetInputFile
+void GetInputFile( _In_ HWND hDlg, _Out_ TCHAR szFile[MAX_PATH] )
+{
+	assert( hDlg && IsWindow( hDlg ) );
+	assert( szFile );
+
+	GetDlgItemText( hDlg, IDC_EDIT_CMBK, szFile, MAX_PATH );
+
+	StrTrim( szFile, _T( " \r\n" ) );
+	PathUnquoteSpaces( szFile );
+	StrTrim( szFile, _T( " " ) );
+}
+
+
+//++ SetOutputFile
+void SetOutputFile( _In_ HWND hDlg )
+{
+	TCHAR szInput[MAX_PATH], szOutput[MAX_PATH];
+
+	szOutput[0] = 0;
+	GetInputFile( hDlg, szInput );
+	if (PathFileExists( szInput )) {
+
+		StringCchCopy( szOutput, ARRAYSIZE( szOutput ), szInput );
+		PathRemoveExtension( szOutput );
+
+		SYSTEMTIME st;
+		GetLocalTime( &st );
+
+		TCHAR szSuffix[30];
+		StringCchPrintf( szSuffix, ARRAYSIZE( szSuffix ), _T( "-%hu%02hu%02hu" ), st.wYear, st.wMonth, st.wDay );
+		StringCchCat( szOutput, ARRAYSIZE( szOutput ), szSuffix );
+
+		PathAddExtension( szOutput, _T( ".xml" ) );
+	}
+
+	SetDlgItemText( hDlg, IDC_EDIT_SMSBR, szOutput );
+}
+
+
 //++ DialogProc
 INT_PTR CALLBACK DialogProc( __in HWND hDlg, __in UINT iMsg, __in WPARAM wParam, __in LPARAM lParam )
 {
@@ -186,6 +226,11 @@ INT_PTR CALLBACK DialogProc( __in HWND hDlg, __in UINT iMsg, __in WPARAM wParam,
 				case IDC_BUTTON_W2A:
 					OnButtonConvertW2A( hDlg );
 					break;
+
+				case IDC_EDIT_CMBK:
+					if (HIWORD( wParam ) == EN_KILLFOCUS)
+						SetOutputFile( hDlg );		/// Input filename -> Output filename
+					break;
 			}
 			break;
 		}
@@ -223,8 +268,7 @@ void OnButtonAbout( _In_ HWND hDlg )
 void OnButtonBrowseCMBK( _In_ HWND hDlg )
 {
 	TCHAR szInput[MAX_PATH];
-	szInput[0] = 0;
-	GetDlgItemText( hDlg, IDC_EDIT_CMBK, szInput, ARRAYSIZE( szInput ) );
+	GetInputFile( hDlg, szInput );
 
 	TCHAR szFilter[50];
 	memcpy( szFilter, _T( "*.msg\0*.msg\0*.xml\0*.xml\0*.*\0*.*\0\0" ), 33 * sizeof( TCHAR ) );
@@ -238,19 +282,8 @@ void OnButtonBrowseCMBK( _In_ HWND hDlg )
 	ofn.Flags = OFN_ENABLESIZING | OFN_FILEMUSTEXIST | OFN_LONGNAMES;
 
 	if (GetOpenFileName( &ofn )) {
-
 		SetDlgItemText( hDlg, IDC_EDIT_CMBK, szInput );
-
-		// Generate output file name
-		TCHAR szOutput[MAX_PATH];
-		StringCchCopy( szOutput, ARRAYSIZE( szOutput ), szInput );
-		PathRenameExtension( szOutput, _T( ".xml" ) );
-		if (CompareString( CP_ACP, NORM_IGNORECASE, szOutput, -1, szInput, -1 ) == CSTR_EQUAL) {
-			PathRemoveExtension( szOutput );
-			StringCchCat( szOutput, ARRAYSIZE( szOutput ), _T( "-sms_w2a" ) );
-			PathAddExtension( szOutput, _T( ".xml" ) );
-		}
-		SetDlgItemText( hDlg, IDC_EDIT_SMSBR, szOutput );
+		SetOutputFile( hDlg );		/// Input filename -> Output filename
 	}
 }
 
@@ -261,10 +294,9 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 	HRESULT hr;
 
 	TCHAR szInput[MAX_PATH], szOutput[MAX_PATH];
-	szInput[0] = 0;
 	szOutput[0] = 0;
 
-	GetDlgItemText( hDlg, IDC_EDIT_CMBK, szInput, ARRAYSIZE( szInput ) );
+	GetInputFile( hDlg, szInput );
 	GetDlgItemText( hDlg, IDC_EDIT_SMSBR, szOutput, ARRAYSIZE( szOutput ) );
 
 	if (!*szInput) {
@@ -272,41 +304,46 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 		return;
 	}
 
-	SMS_LIST SmsList;
-	hr = Read_CMBK( szInput, SmsList );
-	if (SUCCEEDED( hr )) {
+	if (!PathFileExists( szOutput ) ||
+		UtlMessageBox( hDlg, MB_YESNO | MB_ICONQUESTION, NULL, DialogTitle( hDlg ), _T( "\"%s\" already exists\nOverwrite?" ), PathFindFileName( szOutput ) ) == IDYES)
+	{
 
-		///for (auto it = SmsList.begin(); it != SmsList.end(); it++) {
-		///	SYSTEMTIME st;
-		///	FileTimeToSystemTime( &it->Timestamp, &st );
-		///	UtlDebugString(
-		///		_T( "[%hu/%02hu/%02hu %02hu:%02hu:%02hu.%03hu] %s %s %ws \"%ws\"\n" ),
-		///		st.wYear, st.wMonth, st.wDay,
-		///		st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-		///		it->IsIncoming ? _T( "IN" ) : _T( "OUT" ),
-		///		it->IsRead ? _T( "Read" ) : _T( "Unread" ),
-		///		it->PhoneNo.GetBSTR(),
-		///		it->Text.GetBSTR()
-		///	);
-		///}
+		SMS_LIST SmsList;
+		hr = Read_CMBK( szInput, SmsList );
+		if (SUCCEEDED( hr )) {
 
-		TCHAR szComment[255], szVersion[50], szTime[50];
-		szVersion[0] = 0;
-		UtlReadVersionString( NULL, _T( "FileVersion" ), szVersion, ARRAYSIZE( szVersion ) );
-		SYSTEMTIME st;
-		GetLocalTime( &st );
-		StringCchPrintf( szTime, ARRAYSIZE( szTime ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
-		StringCchPrintf( szComment, ARRAYSIZE( szComment ), _T( "File created with sms_w2a %s on %s" ), szVersion, szTime );
+			///for (auto it = SmsList.begin(); it != SmsList.end(); it++) {
+			///	SYSTEMTIME st;
+			///	FileTimeToSystemTime( &it->Timestamp, &st );
+			///	UtlDebugString(
+			///		_T( "[%hu/%02hu/%02hu %02hu:%02hu:%02hu.%03hu] %s %s %ws \"%ws\"\n" ),
+			///		st.wYear, st.wMonth, st.wDay,
+			///		st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+			///		it->IsIncoming ? _T( "IN" ) : _T( "OUT" ),
+			///		it->IsRead ? _T( "Read" ) : _T( "Unread" ),
+			///		it->PhoneNo.GetBSTR(),
+			///		it->Text.GetBSTR()
+			///	);
+			///}
 
-		hr = Write_SMSBR( szOutput, SmsList, szComment );
-	}
+			TCHAR szComment[255], szVersion[50], szTime[50];
+			szVersion[0] = 0;
+			UtlReadVersionString( NULL, _T( "FileVersion" ), szVersion, ARRAYSIZE( szVersion ) );
+			SYSTEMTIME st;
+			GetLocalTime( &st );
+			StringCchPrintf( szTime, ARRAYSIZE( szTime ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
+			StringCchPrintf( szComment, ARRAYSIZE( szComment ), _T( "File created with sms_w2a %s on %s" ), szVersion, szTime );
 
-	// Message
-	if (SUCCEEDED( hr )) {
-		UtlMessageBox( hDlg, MB_OK, MAKEINTRESOURCE( IDI_MAIN ), DialogTitle( hDlg ), _T( "Successfully converted %u messages\nEnjoy!" ), g_hInst, (ULONG)SmsList.size() );
-	} else {
-		TCHAR szErr[128];
-		UtlMessageBox( hDlg, MB_OK | MB_ICONSTOP, NULL, DialogTitle( hDlg ), _T( "%s\nError 0x%x" ), UtlFormatError( hr, szErr, ARRAYSIZE( szErr ) ), hr );
+			hr = Write_SMSBR( szOutput, SmsList, szComment );
+		}
+
+		// Message
+		if (SUCCEEDED( hr )) {
+			UtlMessageBox( hDlg, MB_OK, MAKEINTRESOURCE( IDI_MAIN ), DialogTitle( hDlg ), _T( "Successfully converted %u messages\nEnjoy!" ), g_hInst, (ULONG)SmsList.size() );
+		} else {
+			TCHAR szErr[128];
+			UtlMessageBox( hDlg, MB_OK | MB_ICONSTOP, NULL, DialogTitle( hDlg ), _T( "%s\nError 0x%x" ), UtlFormatError( hr, szErr, ARRAYSIZE( szErr ) ), hr );
+		}
 	}
 }
 
