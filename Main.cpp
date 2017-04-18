@@ -2,6 +2,7 @@
 #include "Main.h"
 #include "Resource.h"
 #include "SmsConvert.h"
+#include <functional>
 
 
 HINSTANCE g_hInst = NULL;
@@ -312,6 +313,9 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 		hr = Read_CMBK( szInput, SmsList );
 		if (SUCCEEDED( hr )) {
 
+			/// Sort messages chronologically
+			SmsList.sort( std::less<SMS>() );
+
 			///for (auto it = SmsList.begin(); it != SmsList.end(); it++) {
 			///	SYSTEMTIME st;
 			///	FileTimeToSystemTime( &it->Timestamp, &st );
@@ -332,9 +336,14 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 			SYSTEMTIME st;
 			GetLocalTime( &st );
 			StringCchPrintf( szTime, ARRAYSIZE( szTime ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
-			StringCchPrintf( szComment, ARRAYSIZE( szComment ), _T( "File created by sms_w2a %s on %s" ), szVersion, szTime );
+			StringCchPrintf( szComment, ARRAYSIZE( szComment ), _T( " File created by sms_w2a %s on %s " ), szVersion, szTime );
 
-			hr = Write_SMSBR( szOutput, SmsList, szComment );
+			LPTSTR ppszComments[] = {
+				szComment,
+				L" https://github.com/negrutiu/sms_w2a ",
+				NULL
+			};
+			hr = Write_SMSBR( szOutput, SmsList, ppszComments );
 		}
 
 		// Message

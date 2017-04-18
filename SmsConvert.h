@@ -22,7 +22,7 @@ struct SMS {
 	_bstr_t Text;
 	std::vector<_bstr_t> PhoneNo;
 
-	bool operator==( SMS& second ) const {
+	bool operator==( const SMS& second ) const {
 		return
 			Timestamp.dwHighDateTime == second.Timestamp.dwHighDateTime &&
 			Timestamp.dwLowDateTime == second.Timestamp.dwLowDateTime &&
@@ -32,15 +32,30 @@ struct SMS {
 			PhoneNo == second.PhoneNo
 			;
 	}
+
+	bool operator<( const SMS& second ) const {
+		return *((PULONG64)&Timestamp) < *((PULONG64)&second.Timestamp);
+	}
+
+	bool operator>(const SMS& second) const {
+		return *((PULONG64)&Timestamp) > *((PULONG64)&second.Timestamp);
+	}
 };
 typedef std::list<SMS> SMS_LIST;
 
 
 //+ contacts+message backup (Windows Phone)
 /// https://www.microsoft.com/en-us/store/p/contacts-message-backup/9nblgggz57gm
-HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList );
+HRESULT Read_CMBK(
+	_In_ LPCTSTR pszFile,
+	_Out_ SMS_LIST& SmsList
+	);
 
 
 //+ SMS Backup & Restore (Android)
 /// https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore
-HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt_ LPCWSTR pszComment );
+HRESULT Write_SMSBR(
+	_In_ LPCTSTR pszFile,
+	_In_ const SMS_LIST& SmsList,
+	_In_opt_ WCHAR **ppszComment			/// List of LPCWSTR ended with a NULL pointer
+	);
