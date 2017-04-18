@@ -19,7 +19,7 @@ HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 	try {
 
 		IXMLDOMDocument2Ptr XmlDoc;
-		hr = XmlDoc.CreateInstance( _T( "msxml2.domdocument" ) );
+		hr = XmlDoc.CreateInstance( L"msxml2.domdocument" );
 		if (SUCCEEDED( hr )) {
 
 			XmlDoc->async = VARIANT_FALSE;
@@ -41,6 +41,8 @@ HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 				///		<Message>
 				///			<Recepients>
 				///				<string>+00000000000</string>
+				///				<string>+00000000001</string>
+				///				<string>+00000000002</string>
 				///			</Recepients>
 				///			<Body>Message Text</Body>
 				///			<IsIncoming>false</IsIncoming>
@@ -53,7 +55,7 @@ HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 
 				MSXML2::IXMLDOMElementPtr RootNode = XmlDoc->GetdocumentElement();
 				if (RootNode) {
-					if (EqualStr( RootNode->tagName, _T( "ArrayOfMessage" ) )) {
+					if (EqualStr( RootNode->tagName, L"ArrayOfMessage" )) {
 
 						MSXML2::IXMLDOMNodeListPtr NodeList = RootNode->GetchildNodes();
 						if (NodeList) {
@@ -63,12 +65,13 @@ HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 								MSXML2::IXMLDOMElementPtr MsgNode = NodeList->item[i];
 								if (MsgNode) {
 
-									if (EqualStr( MsgNode->tagName, _T( "Message" ) )) {
+									if (EqualStr( MsgNode->tagName, L"Message" )) {
 
 										MSXML2::IXMLDOMNodeListPtr nodes;
 										FILETIME Timestamp;
 										bool bIncoming = false, bRead = false;
-										BSTR bstrBody = NULL, bstrPhoneNo = NULL;
+										BSTR bstrBody = NULL;
+										std::vector<_bstr_t> PhoneNoList;
 
 										// IsIncoming
 										nodes = MsgNode->getElementsByTagName( L"IsIncoming" );
@@ -125,9 +128,12 @@ HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 											nodes = MsgNode->getElementsByTagName( L"Sender" );
 											assert( nodes );
 											if (nodes) {
-												assert( nodes->length == 1 );
-												if (nodes->length == 1)
+												assert( nodes->length == 1 );						/// Always one sender
+												if (nodes->length == 1) {
+													BSTR bstrPhoneNo = NULL;
 													nodes->item[0]->get_text( &bstrPhoneNo );
+													PhoneNoList.push_back( bstrPhoneNo );
+												}
 												nodes.Release();
 											}
 
@@ -136,31 +142,32 @@ HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 											nodes = MsgNode->getElementsByTagName( L"Recepients" );
 											assert( nodes );
 											if (nodes) {
-												assert( nodes->length == 1 );
-												if (nodes->length == 1) {
-													assert( nodes->item[0]->GetchildNodes()->length == 1 );
-													MSXML2::IXMLDOMNodePtr node2 = nodes->item[0]->GetfirstChild();
-													if (node2)
-														node2->get_text( &bstrPhoneNo );
+												MSXML2::IXMLDOMNodeListPtr nodes2 = nodes->item[0]->GetchildNodes();
+												assert( nodes2 );
+												for (long j = 0; j < nodes2->length; j++) {			/// Multiple receipients
+													BSTR bstrPhoneNo;
+													nodes2->item[j]->get_text( &bstrPhoneNo );
+													PhoneNoList.push_back( bstrPhoneNo );
 												}
 												nodes.Release();
 											}
 										}
 
 										// Collect
-										if (bstrBody && *bstrBody && bstrPhoneNo && *bstrPhoneNo) {
+										if (bstrBody && *bstrBody && !PhoneNoList.empty()) {
 											SMS sms;
 											sms.Timestamp = Timestamp;
 											sms.IsIncoming = bIncoming;
 											sms.IsRead = bRead;
 											sms.Text = bstrBody;
-											sms.PhoneNo = bstrPhoneNo;
+											sms.PhoneNo = PhoneNoList;
 											SmsList.push_back( sms );
 										}
 									}
 								}
 							}
 
+							// Remove duplicates
 							SmsList.erase( std::unique( SmsList.begin(), SmsList.end() ), SmsList.end() );
 						}
 
@@ -228,8 +235,8 @@ HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt
 	try {
 
 		/// <smses count = "2" backup_set = "cb081d84-aca6-4a12-ab0d-30cfdcf1891f" backup_date = "1488996424918">
-		/// 	<sms protocol = "0" address = "+40744791245" date = "1488572656975" type = "1" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "+40770000053" read = "1" status = "-1" locked = "0" date_sent = "1488572650000" readable_date = "Mar 3, 2017 22:24:16" contact_name = "First Last Name" / >
-		/// 	<sms protocol = "0" address = "+40744791245" date = "1488572942710" type = "2" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "null" read = "1" status = "-1" locked = "0" date_sent = "0" readable_date = "Mar 3, 2017 22:29:02" contact_name = "First Last Name" / >
+		/// 	<sms protocol = "0" address = "+40000000000" date = "1488572656975" type = "1" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "+40770000053" read = "1" status = "-1" locked = "0" date_sent = "1488572650000" readable_date = "Mar 3, 2017 22:24:16" contact_name = "First Last Name" / >
+		/// 	<sms protocol = "0" address = "+40000000000" date = "1488572942710" type = "2" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "null" read = "1" status = "-1" locked = "0" date_sent = "0" readable_date = "Mar 3, 2017 22:29:02" contact_name = "First Last Name" / >
 		/// </smses>
 
 		IXMLDOMDocument2Ptr XmlDoc;
@@ -243,7 +250,7 @@ HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt
 
 			XmlDoc->appendChild( XmlDoc->createProcessingInstruction( L"xml", L"version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"" ) );
 			XmlDoc->appendChild( XmlDoc->createProcessingInstruction( L"xml-stylesheet", L"type=\"text/xsl\" href=\"sms.xsl\"" ) );
-			XmlDoc->appendChild( XmlDoc->createComment( pszComment ? pszComment : L"Generated by sms_w2a" ) );
+			XmlDoc->appendChild( XmlDoc->createComment( pszComment ? pszComment : L"File created by sms_w2a" ) );
 
 			// Root node
 			MSXML2::IXMLDOMNodePtr RootNode;
@@ -266,7 +273,13 @@ HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt
 			RootNode->attributes->getNamedItem( L"backup_set" )->text = (LPCWSTR)szuuid;
 			RpcStringFree( &szuuid );
 
-			StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%u", (ULONG)SmsList.size() );
+			/// NOTES
+			///   Outgoing messages may have multiple recipients!
+			///   E.g. a message sent to two contacts will count as two messages
+			ULONG iCount = 0;
+			for (auto it = SmsList.begin(); it != SmsList.end(); ++it)
+				iCount += (ULONG)it->PhoneNo.size();
+			StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%u", iCount );
 			RootNode->attributes->setNamedItem( XmlDoc->createAttribute( L"count" ) );
 			RootNode->attributes->getNamedItem( L"count" )->text = szBuf;
 
@@ -275,48 +288,53 @@ HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt
 			// SMS nodes
 			for (auto it = SmsList.begin(); it != SmsList.end(); ++it) {
 
-				MSXML2::IXMLDOMNodePtr MsgNode = XmlDoc->createNode( vtTemp, L"sms", L"" );
+				/// Outgoing message may have multiple recipients
+				/// "Clone" the same message for each contact
+				for (auto itPhoneNo = it->PhoneNo.begin(); itPhoneNo != it->PhoneNo.end(); ++itPhoneNo) {
 
-				MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"protocol" ) );
-				MsgNode->attributes->getNamedItem( L"protocol" )->text = L"0";
+					MSXML2::IXMLDOMNodePtr MsgNode = XmlDoc->createNode( vtTemp, L"sms", L"" );
 
-				MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"address" ) );
-				MsgNode->attributes->getNamedItem( L"address" )->text = it->PhoneNo;
+					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"protocol" ) );
+					MsgNode->attributes->getNamedItem( L"protocol" )->text = L"0";
 
-				time_t tm = FileTime_to_POSIX( it->Timestamp );
-				StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%I64u", tm );
-				MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"date" ) );
-				MsgNode->attributes->getNamedItem( L"date" )->text = szBuf;
+					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"address" ) );
+					MsgNode->attributes->getNamedItem( L"address" )->text = *itPhoneNo;
 
-				MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"type" ) );
-				MsgNode->attributes->getNamedItem( L"type" )->text = it->IsIncoming ? L"1" : L"2";
+					time_t tm = FileTime_to_POSIX( it->Timestamp );
+					StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%I64u", tm );
+					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"date" ) );
+					MsgNode->attributes->getNamedItem( L"date" )->text = szBuf;
 
-				///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"subject" ) );
-				///MsgNode->attributes->getNamedItem( L"subject" )->text = L"null";
+					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"type" ) );
+					MsgNode->attributes->getNamedItem( L"type" )->text = it->IsIncoming ? L"1" : L"2";
 
-				MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"body" ) );
-				MsgNode->attributes->getNamedItem( L"body" )->text = it->Text;
+					///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"subject" ) );
+					///MsgNode->attributes->getNamedItem( L"subject" )->text = L"null";
 
-				MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"read" ) );
-				MsgNode->attributes->getNamedItem( L"read" )->text = it->IsRead ? L"1" : L"0";
+					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"body" ) );
+					MsgNode->attributes->getNamedItem( L"body" )->text = it->Text;
 
-				///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"date_sent" ) );
-				///MsgNode->attributes->getNamedItem( L"date_sent" )->text = L"";
+					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"read" ) );
+					MsgNode->attributes->getNamedItem( L"read" )->text = it->IsRead ? L"1" : L"0";
 
-				FileTimeToSystemTime( &it->Timestamp, &st );
-				StringCchPrintf( szBuf, ARRAYSIZE( szBuf ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
-				MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"readable_date" ) );
-				MsgNode->attributes->getNamedItem( L"readable_date" )->text = szBuf;
+					///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"date_sent" ) );
+					///MsgNode->attributes->getNamedItem( L"date_sent" )->text = L"";
 
-				///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"contact_name" ) );
-				///MsgNode->attributes->getNamedItem( L"contact_name" )->text = L"";
+					FileTimeToSystemTime( &it->Timestamp, &st );
+					StringCchPrintf( szBuf, ARRAYSIZE( szBuf ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
+					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"readable_date" ) );
+					MsgNode->attributes->getNamedItem( L"readable_date" )->text = szBuf;
 
-				RootNode->appendChild( MsgNode );
+					///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"contact_name" ) );
+					///MsgNode->attributes->getNamedItem( L"contact_name" )->text = L"";
+
+					RootNode->appendChild( MsgNode );
+				}
 			}
 
-			// Make sure the existing xml file is not read-only
+			// Make sure the output file is not read-only. MSXML won't like it..
 			DWORD attr = GetFileAttributes( pszFile );
-			if ((attr & FILE_ATTRIBUTE_READONLY) != 0)
+			if (attr & FILE_ATTRIBUTE_READONLY)
 				SetFileAttributes( pszFile, attr & ~FILE_ATTRIBUTE_READONLY );
 
 			// Save

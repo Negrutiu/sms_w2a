@@ -332,7 +332,7 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 			SYSTEMTIME st;
 			GetLocalTime( &st );
 			StringCchPrintf( szTime, ARRAYSIZE( szTime ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
-			StringCchPrintf( szComment, ARRAYSIZE( szComment ), _T( "File created with sms_w2a %s on %s" ), szVersion, szTime );
+			StringCchPrintf( szComment, ARRAYSIZE( szComment ), _T( "File created by sms_w2a %s on %s" ), szVersion, szTime );
 
 			hr = Write_SMSBR( szOutput, SmsList, szComment );
 		}

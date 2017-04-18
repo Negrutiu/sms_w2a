@@ -5,6 +5,7 @@
 #pragma once
 
 #include <list>
+#include <vector>
 
 // MSXML
 #import <msxml3.dll> ///raw_interfaces_only
@@ -19,7 +20,7 @@ struct SMS {
 	bool IsIncoming;
 	bool IsRead;
 	_bstr_t Text;
-	_bstr_t PhoneNo;
+	std::vector<_bstr_t> PhoneNo;
 
 	bool operator==( SMS& second ) const {
 		return
