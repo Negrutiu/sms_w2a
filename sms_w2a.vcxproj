@@ -186,6 +186,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Main.h" />
+    <ClInclude Include="rapidxml\rapidxml.hpp" />
+    <ClInclude Include="rapidxml\rapidxml_iterators.hpp" />
+    <ClInclude Include="rapidxml\rapidxml_print.hpp" />
+    <ClInclude Include="rapidxml\rapidxml_utils.hpp" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="SmsConvert.h" />
     <ClInclude Include="StdAfx.h" />
@@ -199,6 +203,12 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="res\Icon.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="rapidxml\license.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="rapidxml\manual.html" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
