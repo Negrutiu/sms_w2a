@@ -8,6 +8,43 @@
 #include <time.h>
 
 
+//!++ FILETIME <-> POSIX
+
+//? NOTES:
+//? * FILETIME is represented as 100ns intervals from 1 Jan 1601 (Windows epoch)
+//? * POSIX time is usually represented as *microseconds* (see struct timeval {} in BSD headers) from 1 Jan 1970 (Unix epoch)
+//? * Android messages are stored as *milliseconds* from 1 Jan 1970
+//? (Marius)
+
+//? LEGEND:
+//? * Seconds       1
+//? * Milliseconds  1000
+//? * Microseconds  1000000
+//? * Nanoseconds   1000000000
+
+//? LINKS:
+//? * https://en.wikipedia.org/wiki/Unix_time
+//? * http://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
+//? * http://stackoverflow.com/questions/3585583/convert-unix-linux-time-to-windows-filetime
+
+#define EPOCH_DIFFms (11644473600LL * 1000LL)		/// Milliseconds(1/1/1970 - 1/1/1601)
+
+time_t FILETIME_to_POSIXms( FILETIME ft )
+{
+	time_t tm = *(time_t*)&ft / 10000;				/// 100ns -> ms
+	tm -= EPOCH_DIFFms;								/// Win epoch -> Unix epoch
+	return tm;
+}
+
+FILETIME POSIXms_to_FILETIME( time_t tm )
+{
+	tm += EPOCH_DIFFms;								/// Unix epoch -> Win epoch
+	tm *= 10000;									/// ms -> 100ns
+	return *(FILETIME*)&tm;
+}
+
+
+
 //++ Read_CMBK
 HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 {
@@ -190,39 +227,6 @@ HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 }
 
 
-// http://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-///#define TICKS_PER_SECOND 10000000
-///#define EPOCH_DIFFERENCE 11644473600LL
-///time_t convertWindowsTimeToUnixTime( long long int input ) {
-///	long long int temp;
-///	temp = input / TICKS_PER_SECOND; //convert from 100ns intervals to seconds;
-///	temp = temp - EPOCH_DIFFERENCE;  //subtract number of seconds between epochs
-///	return (time_t)temp;
-///}
-
-
-// http://stackoverflow.com/questions/6161776/convert-windows-filetime-to-second-in-unix-linux
-time_t FileTime_to_POSIX( FILETIME ft )
-{
-	FILETIME localFileTime;
-	FileTimeToLocalFileTime( &ft, &localFileTime );
-	SYSTEMTIME sysTime;
-	FileTimeToSystemTime( &localFileTime, &sysTime );
-	struct tm tmtime = {0};
-	tmtime.tm_year = sysTime.wYear - 1900;
-	tmtime.tm_mon = sysTime.wMonth - 1;
-	tmtime.tm_mday = sysTime.wDay;
-	tmtime.tm_hour = sysTime.wHour;
-	tmtime.tm_min = sysTime.wMinute;
-	tmtime.tm_sec = sysTime.wSecond;
-	tmtime.tm_wday = 0;
-	tmtime.tm_yday = 0;
-	tmtime.tm_isdst = -1;
-	time_t ret = mktime( &tmtime );
-	ret *= 1000;	/// Marius!
-	return ret;
-}
-
 
 //++ Write_SMSBR
 HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt_ WCHAR **ppszComment )
@@ -266,7 +270,7 @@ HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt
 			FILETIME ft;
 			GetSystemTime( &st );
 			SystemTimeToFileTime( &st, &ft );
-			time_t tm = FileTime_to_POSIX( ft );
+			time_t tm = FILETIME_to_POSIXms( ft );
 			StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%I64u", tm );
 			RootNode->attributes->setNamedItem( XmlDoc->createAttribute( L"backup_date" ) );
 			RootNode->attributes->getNamedItem( L"backup_date" )->text = szBuf;
@@ -306,7 +310,7 @@ HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt
 					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"address" ) );
 					MsgNode->attributes->getNamedItem( L"address" )->text = *itPhoneNo;
 
-					time_t tm = FileTime_to_POSIX( it->Timestamp );
+					time_t tm = FILETIME_to_POSIXms( it->Timestamp );
 					StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%I64u", tm );
 					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"date" ) );
 					MsgNode->attributes->getNamedItem( L"date" )->text = szBuf;
