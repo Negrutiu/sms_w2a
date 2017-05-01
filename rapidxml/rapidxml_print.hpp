@@ -21,6 +21,7 @@ namespace rapidxml
     // Printing flags
 
     const int print_no_indenting = 0x1;   //!< Printer flag instructing the printer to suppress indenting of XML. See print() function.
+	const int print_no_surrogate_expansion = 0x2;	//!< Printer flag instructing the printer not to expand the high and low surrogate halves used by UTF-16 (U+D800 through U+DFFF)
 
     ///////////////////////////////////////////////////////////////////////
     // Internal
@@ -44,7 +45,7 @@ namespace rapidxml
         // Copy characters from given range to given output iterator and expand
         // characters into references (&lt; &gt; &apos; &quot; &amp;)
         template<class OutIt, class Ch>
-        inline OutIt copy_and_expand_chars(const Ch *begin, const Ch *end, Ch noexpand, OutIt out)
+        inline OutIt copy_and_expand_chars(const Ch *begin, const Ch *end, Ch noexpand, int flags, OutIt out)
         {
             while (begin != end)
             {
@@ -72,8 +73,27 @@ namespace rapidxml
                         *out++ = Ch('&'); *out++ = Ch('a'); *out++ = Ch('m'); *out++ = Ch('p'); *out++ = Ch(';'); 
                         break;
                     default:
+						if ((sizeof( Ch ) == 1) && (flags & print_no_surrogate_expansion) && ((*begin & 0xf0) == 0xe0)) {
+
+							// Three byte UTF-8 character
+							assert( (*(begin + 1) & 0xc0) == 0x80 );
+							assert( (*(begin + 2) & 0xc0) == 0x80 );
+
+							ULONG code = ((*begin & 0x0f) << 12) | ((*(begin + 1) & 0x3f) << 6) | ((*(begin + 2) & 0x3f));
+							if (code >= 0xd800 && code < 0xe000) {
+								// High surrogates D800–DBFF, Low surrogates DC00–DFFF
+								Ch temp[10];
+								sprintf_s( temp, 10, "&#%u;", code );
+								for (auto psz = temp; *psz; psz++)
+									*out++ = *psz;
+								begin += 2;			// An additional ++begin will follow...
+							} else {
+								*out++ = *begin;    // No expansion, copy character
+							}
+						} else {
                         *out++ = *begin;    // No expansion, copy character
                     }
+                }
                 }
                 ++begin;    // Step to next character
             }
@@ -189,13 +209,13 @@ namespace rapidxml
                     if (find_char<Ch, Ch('"')>(attribute->value(), attribute->value() + attribute->value_size()))
                     {
                         *out = Ch('\''), ++out;
-                        out = copy_and_expand_chars(attribute->value(), attribute->value() + attribute->value_size(), Ch('"'), out);
+                        out = copy_and_expand_chars(attribute->value(), attribute->value() + attribute->value_size(), Ch('"'), flags, out);
                         *out = Ch('\''), ++out;
                     }
                     else
                     {
                         *out = Ch('"'), ++out;
-                        out = copy_and_expand_chars(attribute->value(), attribute->value() + attribute->value_size(), Ch('\''), out);
+                        out = copy_and_expand_chars(attribute->value(), attribute->value() + attribute->value_size(), Ch('\''), flags, out);
                         *out = Ch('"'), ++out;
                     }
                 }
@@ -210,7 +230,7 @@ namespace rapidxml
             assert(node->type() == node_data);
             if (!(flags & print_no_indenting))
                 out = fill_chars(out, indent, Ch('\t'));
-            out = copy_and_expand_chars(node->value(), node->value() + node->value_size(), Ch(0), out);
+            out = copy_and_expand_chars(node->value(), node->value() + node->value_size(), Ch(0), flags, out);
             return out;
         }
 
@@ -267,12 +287,12 @@ namespace rapidxml
                 if (!child)
                 {
                     // If node has no children, only print its value without indenting
-                    out = copy_and_expand_chars(node->value(), node->value() + node->value_size(), Ch(0), out);
+                    out = copy_and_expand_chars(node->value(), node->value() + node->value_size(), Ch(0), flags, out);
                 }
                 else if (child->next_sibling() == 0 && child->type() == node_data)
                 {
                     // If node has a sole data child, only print its value without indenting
-                    out = copy_and_expand_chars(child->value(), child->value() + child->value_size(), Ch(0), out);
+                    out = copy_and_expand_chars(child->value(), child->value() + child->value_size(), Ch(0), flags, out);
                 }
                 else
                 {
