@@ -19,9 +19,60 @@ public:
 
 	void StripLF()
 	{
-		for (size_t i = 0; i < size(); i++)
+		for (int i = (int)size() - 1; i >= 0; i--)
 			if (at( i ) == '\r')
 				erase( begin() + i );
+	}
+
+	DWORD SaveToFile( _In_ LPCTSTR pszFile ) const
+	{
+		DWORD err = ERROR_SUCCESS;
+		if (pszFile && *pszFile) {
+			HANDLE h = CreateFile( pszFile, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL );
+			if (h != INVALID_HANDLE_VALUE) {
+				DWORD iBytes;
+				if (WriteFile( h, c_str(), (DWORD)size(), &iBytes, NULL )) {
+					assert( iBytes == size() );
+				} else {
+					err = GetLastError();
+				}
+				CloseHandle( h );
+			} else {
+				err = GetLastError();
+			}
+		} else {
+			err = ERROR_INVALID_PARAMETER;
+		}
+		return err;
+	}
+
+	DWORD LoadFromFile( _In_ LPCTSTR pszFile )
+	{
+		DWORD err = ERROR_SUCCESS;
+		if (pszFile && *pszFile) {
+			HANDLE h = CreateFile( pszFile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
+			if (h != INVALID_HANDLE_VALUE) {
+				DWORD iSize = GetFileSize( h, NULL );
+				if (iSize != INVALID_FILE_SIZE) {
+					resize( iSize );		/// Make room for the file content
+					DWORD iBytes;
+					if (ReadFile( h, (LPBYTE)c_str(), iSize, &iBytes, NULL )) {		/// Read directly to string's buffer ;)
+						assert( iBytes == iSize );
+						assert( iBytes == size() );
+					} else {
+						err = GetLastError();
+					}
+				} else {
+					err = GetLastError();
+				}
+				CloseHandle( h );
+			} else {
+				err = GetLastError();
+			}
+		} else {
+			err = ERROR_INVALID_PARAMETER;
+		}
+		return err;
 	}
 };
 
@@ -82,6 +133,7 @@ ULONG SmsGetFileSummary(
 
 ULONG Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList );
 ULONG Write_CMBK( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList );
+ULONG Compute_CMBK_Hash( _In_ LPCTSTR pszFile, _Out_ utf8string &Hash );
 
 
 //+ SMS Backup & Restore (Android)

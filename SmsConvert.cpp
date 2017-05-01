@@ -8,6 +8,7 @@
 #include "rapidxml\rapidxml.hpp"
 #include "rapidxml\rapidxml_utils.hpp"
 #include "rapidxml\rapidxml_print.hpp"
+#include <wincrypt.h>
 
 
 #define SMS_APP_NAME "sms_w2a"
@@ -139,35 +140,6 @@ FILETIME POSIXms_to_FILETIME( time_t tm )
 	tm += EPOCH_DIFFms;								/// Unix epoch -> Win epoch
 	tm *= 10000;									/// ms -> 100ns
 	return *(FILETIME*)&tm;
-}
-
-
-
-//++ ReadFileToString
-///  The memory buffer must be HeapFree()-d when no longer needed
-LPSTR ReadFileToString( _In_ LPCTSTR pszFile )
-{
-	LPSTR psz = NULL;
-	if (pszFile && *pszFile) {
-		HANDLE h = CreateFile( pszFile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
-		if (h != INVALID_HANDLE_VALUE) {
-			ULONG iBufSize = GetFileSize( h, NULL );
-			if (iBufSize != INVALID_FILE_SIZE) {
-				if ((psz = (LPSTR)HeapAlloc( GetProcessHeap(), 0, iBufSize + 1 )) != NULL) {
-					DWORD dwBytes;
-					if (ReadFile( h, psz, iBufSize, &dwBytes, NULL )) {
-						psz[dwBytes] = ANSI_NULL;
-						// Success
-					} else {
-						HeapFree( GetProcessHeap(), 0, psz );
-						psz = NULL;
-					}
-				}
-			}
-			CloseHandle( h );
-		}
-	}
-	return psz;
 }
 
 
@@ -341,8 +313,20 @@ ULONG Write_CMBK( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList )
 		WideCharToMultiByte( CP_UTF8, 0, pszFile, -1, szFileA, ARRAYSIZE( szFileA ), NULL, NULL );
 		std::ofstream fout( szFileA );
 		if (!fout.bad()) {
-			rapidxml::print( std::ostream_iterator<char>( fout ), Doc, 0 );
+
+			rapidxml::print( std::ostream_iterator<char>( fout ), Doc, rapidxml::print_no_surrogate_expansion );
 			fout.close();
+
+			// Generate the hash file (.hsh) required by "contacts+message backup"
+			utf8string sHsh;
+			err = Compute_CMBK_Hash( pszFile, sHsh );
+			if (err == ERROR_SUCCESS) {
+				TCHAR szHshFile[MAX_PATH];
+				StringCchCopy( szHshFile, ARRAYSIZE( szHshFile ), pszFile );
+				PathRenameExtension( szHshFile, _T( ".hsh" ) );
+				err = sHsh.SaveToFile( szHshFile );
+				//+ Done
+			}
 		}
 
 	} catch (const rapidxml::parse_error &e) {
@@ -351,6 +335,159 @@ ULONG Write_CMBK( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList )
 		err = ERROR_INVALID_DATA;
 	} catch (...) {
 		err = ERROR_INVALID_DATA;
+	}
+
+	return err;
+}
+
+
+//++ Compute_CMBK_Hash
+//?+ https://github.com/gpailler/Android2Wp_SMSConverter/blob/master/converter.py
+ULONG Compute_CMBK_Hash( _In_ LPCTSTR pszFile, _Out_ utf8string &Hash )
+{
+	DWORD err = ERROR_SUCCESS;
+
+	CHAR base64_sha2[50];
+	base64_sha2[0] = ANSI_NULL;
+
+	Hash.clear();
+
+	//! sha256(file)
+	HANDLE h = CreateFile( pszFile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
+	if (h != INVALID_HANDLE_VALUE) {
+
+		ULONG iBufSize = 1024 * 16;		/// 16 KiB
+		LPBYTE pBuf = (LPBYTE)HeapAlloc( GetProcessHeap(), 0, iBufSize );
+		if (pBuf) {
+
+			HCRYPTPROV hCryptProv = NULL;
+			if (CryptAcquireContext( &hCryptProv, NULL, MS_ENH_RSA_AES_PROV_W, PROV_RSA_AES, CRYPT_VERIFYCONTEXT | CRYPT_SILENT )) {
+
+				HCRYPTHASH hCryptHash = NULL;
+				if (CryptCreateHash( hCryptProv, CALG_SHA_256, NULL, 0, &hCryptHash )) {
+
+					DWORD iBytesRead;
+					while (err == ERROR_SUCCESS) {
+						if (ReadFile( h, pBuf, iBufSize, &iBytesRead, NULL )) {
+							if (iBytesRead > 0) {
+								if (CryptHashData( hCryptHash, pBuf, iBytesRead, 0 )) {
+								} else {
+									err = GetLastError();		/// CryptHashData
+								}
+							} else {
+								break;	/// EOF
+							}
+						} else {
+							err = GetLastError();		/// ReadFile
+						}
+					}
+					if (err == ERROR_SUCCESS) {
+
+						BYTE pHash[32];
+						DWORD iHashSize = sizeof( pHash );
+						if (CryptGetHashParam( hCryptHash, HP_HASHVAL, pHash, &iHashSize, 0 )) {
+
+							//! base64(sha256(file))
+							DWORD n = ARRAYSIZE( base64_sha2 );
+							if (CryptBinaryToStringA( pHash, iHashSize, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, base64_sha2, &n )) {
+								//+ Success
+							} else {
+								err = GetLastError();		/// CryptBinaryToStringA
+							}
+						} else {
+							err = GetLastError();		/// CryptGetHashParam
+						}
+					}
+					CryptDestroyHash( hCryptHash );
+
+				} else {
+					err = GetLastError();		/// CryptCreateHash
+				}
+				CryptReleaseContext( hCryptProv, 0 );
+
+			} else {
+				err = GetLastError();		/// CryptAquireContext
+			}
+			HeapFree( GetProcessHeap(), 0, pBuf );
+
+		} else {
+			err = GetLastError();		/// HeapAlloc
+		}
+		CloseHandle( h );
+	} else {
+		err = GetLastError();		/// CreateFile
+	}
+
+	//! aes128(base64(sha256(file)))
+	if (err == ERROR_SUCCESS) {
+
+		const ULONG AES128_BLOCK_SIZE = 16;		/// 16 bytes == 128 bits
+
+		const GUID AesKey = {0xD86B2FDE, 0xC318, 0x4DD2,{0x8C, 0x9E, 0xEB, 0x3F, 0x1A, 0x24, 0x4D, 0xF8}};	/// {D86B2FDE-C318-4DD2-8C9E-EB3F1A244DF8}
+		const GUID AesIV = {0x089B6AEC, 0xE81D, 0x49AC,{0x91, 0xDF, 0xAD, 0x07, 0x14, 0x18, 0xE7, 0xA3}};	/// {089B6AEC-E81D-49AC-91DF-AD071418E7A3}
+		assert( sizeof( GUID ) == AES128_BLOCK_SIZE );
+
+		typedef struct _AES_KEY_BLOB {
+			BLOBHEADER hdr;
+			DWORD keySize;
+			BYTE bytes[AES128_BLOCK_SIZE];
+		} AES_KEY_BLOB;
+
+		AES_KEY_BLOB key;
+		HCRYPTPROV hProv;
+		HCRYPTKEY hKey;
+
+		key.hdr.bType = PLAINTEXTKEYBLOB;
+		key.hdr.bVersion = CUR_BLOB_VERSION;
+		key.hdr.reserved = 0;
+		key.hdr.aiKeyAlg = CALG_AES_128;
+		key.keySize = AES128_BLOCK_SIZE;
+		CopyMemory( key.bytes, &AesKey, AES128_BLOCK_SIZE );
+
+		if (CryptAcquireContext( &hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT )) {
+			if (CryptImportKey( hProv, (LPBYTE)&key, sizeof( key ), 0, 0, &hKey )) {
+
+				DWORD iParam = CRYPT_MODE_CBC;
+				CryptSetKeyParam( hKey, KP_MODE, (LPBYTE)&iParam, 0 );
+				//? NOTE: WinCrypt is using PKCS#1 padding by default (which is functionally equivalent to PKCS#7 (and PKCS#5) for AES128)
+				///iParam = PKCS5_PADDING;
+				///CryptSetKeyParam( hKey, KP_PADDING, (LPBYTE)&iParam, 0 );
+
+				if (CryptSetKeyParam( hKey, KP_IV, (LPBYTE)&AesIV, 0 )) {		/// Set the initialization vector
+
+					BYTE aes128[64];
+					ULONG aes128size = lstrlenA( base64_sha2 );
+					CopyMemory( aes128, base64_sha2, aes128size );
+
+					if (CryptEncrypt( hKey, NULL, TRUE, 0, (LPBYTE)aes128, &aes128size, sizeof( aes128 ) )) {
+
+						//! base64(aes128(base64(sha256(file))))
+						CHAR sz[72];
+						DWORD n = ARRAYSIZE( sz );
+						if (CryptBinaryToStringA( aes128, aes128size, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, sz, &n )) {
+
+							//+ Success
+							Hash = sz;		/// Return value
+
+						} else {
+							err = GetLastError();	/// CryptBinaryToStringA
+						}
+					} else {
+						err = GetLastError();	/// CryptEncrypt
+					}
+				} else {
+					err = GetLastError();	/// CryptSetKeyParam
+				}
+				CryptDestroyKey( hKey );
+
+			} else {
+				err = GetLastError();	/// CryptImportKey
+			}
+			CryptReleaseContext( hProv, 0 );
+
+		} else {
+			err = GetLastError();	/// CryptAcquireContext
+		}
 	}
 
 	return err;
