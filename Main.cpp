@@ -148,15 +148,22 @@ INT_PTR CALLBACK DialogProc( __in HWND hDlg, __in UINT iMsg, __in WPARAM wParam,
 				RegCloseKey( hKey );
 			}
 
-			// Display the version in the title bar
 			TCHAR szVersion[50];
 			if (UtlReadVersionString( NULL, _T( "FileVersion" ), szVersion, ARRAYSIZE( szVersion ) ) == ERROR_SUCCESS) {
+				
+				// Display the version in the title bar
 				TCHAR szTitle[255];
 				int iTitleLen = GetWindowText( hDlg, szTitle, ARRAYSIZE( szTitle ) );
 				if (iTitleLen > 0) {
 					StringCchPrintf( szTitle + iTitleLen, ARRAYSIZE( szTitle ) - iTitleLen, _T( " (v%s)" ), szVersion );
 					SetWindowText( hDlg, szTitle );
 				}
+
+				// Initialize the app name written in .xml comments
+				CHAR szAppName[50];
+				szAppName[0] = ANSI_NULL;
+				StringCchPrintfA( szAppName, ARRAYSIZE( szAppName ), "sms_w2a %ws", szVersion );
+				SmsSetAppName( szAppName );
 			}
 
 			// Arrange controls
@@ -272,7 +279,7 @@ void OnButtonBrowseCMBK( _In_ HWND hDlg )
 	GetInputFile( hDlg, szInput );
 
 	TCHAR szFilter[50];
-	memcpy( szFilter, _T( "*.msg\0*.msg\0*.xml\0*.xml\0*.*\0*.*\0\0" ), 33 * sizeof( TCHAR ) );
+	memcpy( szFilter, _T( "*.msg, *.xml\0*.msg;*.xml\0*.*\0*.*\0\0" ), 34 * sizeof( TCHAR ) );
 
 	OPENFILENAME ofn = {0};
 	ofn.lStructSize = sizeof( ofn );
@@ -311,10 +318,12 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 
 		SMS_LIST SmsList;
 		hr = Read_CMBK( szInput, SmsList );
+		//hr = Read_SMSBR( szInput, SmsList );
 		if (SUCCEEDED( hr )) {
 
-			/// Sort messages chronologically
-			SmsList.sort( std::less<SMS>() );
+			/// Sort chronologically
+			//SmsList.sort( std::greater<SMS>() );		/// Newest messages first (CMBK)
+			SmsList.sort( std::less<SMS>() );			/// Oldest messages first (SMSBR)
 
 			///for (auto it = SmsList.begin(); it != SmsList.end(); it++) {
 			///	SYSTEMTIME st;
@@ -330,25 +339,13 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 			///	);
 			///}
 
-			TCHAR szComment[255], szVersion[50], szTime[50];
-			szVersion[0] = 0;
-			UtlReadVersionString( NULL, _T( "FileVersion" ), szVersion, ARRAYSIZE( szVersion ) );
-			SYSTEMTIME st;
-			GetLocalTime( &st );
-			StringCchPrintf( szTime, ARRAYSIZE( szTime ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
-			StringCchPrintf( szComment, ARRAYSIZE( szComment ), _T( " File created by sms_w2a %s on %s " ), szVersion, szTime );
-
-			LPTSTR ppszComments[] = {
-				szComment,
-				L" https://github.com/negrutiu/sms_w2a ",
-				NULL
-			};
-			hr = Write_SMSBR( szOutput, SmsList, ppszComments );
+			//hr = Write_CMBK( szOutput, SmsList );
+			hr = Write_SMSBR( szOutput, SmsList );
 		}
 
 		// Message
 		if (SUCCEEDED( hr )) {
-			UtlMessageBox( hDlg, MB_OK, MAKEINTRESOURCE( IDI_MAIN ), DialogTitle( hDlg ), _T( "Successfully converted %u messages\nEnjoy!" ), g_hInst, (ULONG)SmsList.size() );
+			UtlMessageBox( hDlg, MB_OK, MAKEINTRESOURCE( IDI_MAIN ), DialogTitle( hDlg ), _T( "Successfully converted %u messages\nEnjoy!" ), g_hInst, SmsCount( SmsList ) );	// SmsCount() is aware of multiple contacts
 		} else {
 			TCHAR szErr[128];
 			UtlMessageBox( hDlg, MB_OK | MB_ICONSTOP, NULL, DialogTitle( hDlg ), _T( "%s\nError 0x%x" ), UtlFormatError( hr, szErr, ARRAYSIZE( szErr ) ), hr );
@@ -401,18 +398,3 @@ int APIENTRY _tWinMain( __in HINSTANCE hInstance, __in HINSTANCE hPrevInstance, 
 
 	return (int)err;
 }
-
-
-//++ WinMainCRTStartup
-#if defined(NOCRT)
-#ifdef _UNICODE
-DWORD WINAPI wWinMainCRTStartup( void )
-#else
-DWORD WINAPI WinMainCRTStartup( void )
-#endif
-{
-	DWORD iExitCode = _tWinMain( GetModuleHandle( NULL ), NULL, GetCommandLine(), SW_SHOWDEFAULT );
-	ExitProcess( iExitCode );
-	return iExitCode;
-}
-#endif	///NOCRT

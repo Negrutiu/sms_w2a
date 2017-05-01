@@ -26,6 +26,9 @@
 #define EqualStr(psz1, psz2) \
 	(CompareString( 0, NORM_IGNORECASE, (psz1), -1, (psz2), -1 ) == CSTR_EQUAL)
 
+#define EqualStrA(psz1, psz2) \
+	(CompareStringA( 0, NORM_IGNORECASE, (psz1), -1, (psz2), -1 ) == CSTR_EQUAL)
+
 /// Compare strings, case insensitive, specified length
 #define EqualStrN(psz1, psz2, len) \
 	(CompareString( 0, NORM_IGNORECASE, (psz1), (int)(len), (psz2), (int)(len)) == CSTR_EQUAL)

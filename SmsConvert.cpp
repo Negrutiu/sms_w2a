@@ -5,7 +5,105 @@
 #include "StdAfx.h"
 #include "SmsConvert.h"
 #include <algorithm>
-#include <time.h>
+#include "rapidxml\rapidxml.hpp"
+#include "rapidxml\rapidxml_utils.hpp"
+#include "rapidxml\rapidxml_print.hpp"
+
+
+#define SMS_APP_NAME "sms_w2a"
+#define SMS_APP_LINK "https://github.com/negrutiu/sms_w2a"
+CHAR g_szAppName[50] = SMS_APP_NAME;
+
+
+//++ SmsSetAppName
+VOID SmsSetAppName( _In_ LPCSTR pszName )
+{
+	if (pszName && *pszName) {
+		StringCchCopyA( g_szAppName, ARRAYSIZE( g_szAppName ), pszName );
+	} else {
+		StringCchCopyA( g_szAppName, ARRAYSIZE( g_szAppName ), SMS_APP_NAME );
+	}
+}
+
+
+//++ SmsCount
+ULONG SmsCount( const SMS_LIST &SmsList )
+{
+	ULONG n = 0;
+	for (auto it = SmsList.begin(); it != SmsList.end(); ++it)
+		n += (ULONG)it->PhoneNo.size();
+	return n;
+}
+
+
+//++ SmsGetFileSummary
+ULONG SmsGetFileSummary(
+	_In_ LPCTSTR pszFile,
+	_Out_ ULONG &iType,					/// 0=Unknown, 1=CMBK, 2=SMSBR
+	_Out_ ULONG &iMessageCount,
+	_Out_ std::string &sComments
+)
+{
+	ULONG err = ERROR_SUCCESS;
+
+	if (!pszFile || !*pszFile)
+		return ERROR_INVALID_PARAMETER;
+
+	iType = 0;
+	iMessageCount = 0;
+	sComments.clear();
+
+	try {
+
+		CHAR szFileA[MAX_PATH];
+		WideCharToMultiByte( CP_ACP, 0, pszFile, -1, szFileA, ARRAYSIZE( szFileA ), NULL, NULL );
+		rapidxml::file<> FileObj( szFileA );
+
+		rapidxml::xml_document<> Doc;
+		Doc.parse<rapidxml::parse_comment_nodes>( FileObj.data() );
+
+		rapidxml::xml_node<> *Root;
+		if ((Root = Doc.first_node( "ArrayOfMessage" ))) {
+
+			/// "contacts+message backup" format
+			iType = 1;
+			for (auto n = Doc.first_node(); n; n = n->next_sibling()) {
+				if (n->type() == rapidxml::node_comment) {
+					if (!sComments.empty())
+						sComments += "\n";
+					sComments += n->value();
+				} else if (n->type() == rapidxml::node_element) {
+					break;
+				}
+			}
+			iMessageCount = (ULONG)rapidxml::count_children( Root );
+
+		} else if ((Root = Doc.first_node( "smses" ))) {
+
+			/// "SMS Backup & Restore" format
+			iType = 2;
+			for (auto n = Doc.first_node(); n; n = n->next_sibling()) {
+				if (n->type() == rapidxml::node_comment) {
+					if (!sComments.empty())
+						sComments += "\n";
+					sComments += n->value();
+				} else if (n->type() == rapidxml::node_element) {
+					break;
+				}
+			}
+			iMessageCount = (ULONG)rapidxml::count_children( Root );
+		}
+
+	} catch (const rapidxml::parse_error &e) {
+		UNREFERENCED_PARAMETER( e );
+		///e.what();
+		err = ERROR_INVALID_DATA;
+	} catch (...) {
+		err = ERROR_INVALID_DATA;
+	}
+
+	return err;
+}
 
 
 //!++ FILETIME <-> POSIX
@@ -45,318 +143,420 @@ FILETIME POSIXms_to_FILETIME( time_t tm )
 
 
 
-//++ Read_CMBK
-HRESULT Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
+//++ ReadFileToString
+///  The memory buffer must be HeapFree()-d when no longer needed
+LPSTR ReadFileToString( _In_ LPCTSTR pszFile )
 {
-	HRESULT hr = S_OK;
-
-	if (!pszFile || !*pszFile)
-		return E_INVALIDARG;
-
-	try {
-
-		IXMLDOMDocument2Ptr XmlDoc;
-		hr = XmlDoc.CreateInstance( L"msxml2.domdocument" );
-		if (SUCCEEDED( hr )) {
-
-			XmlDoc->async = VARIANT_FALSE;
-			XmlDoc->PutvalidateOnParse( VARIANT_TRUE );
-			XmlDoc->PutresolveExternals( VARIANT_FALSE );
-
-			if (XmlDoc->load( pszFile )) {
-
-				/// <ArrayOfMessage ...>
-				///		<Message>
-				///			<Recepients/>
-				///			<Body>Message Text</Body>
-				///			<IsIncoming>true</IsIncoming>
-				///			<IsRead>true</IsRead>
-				///			<Attachments/>
-				///			<LocalTimestamp>131329631293736951</LocalTimestamp>
-				///			<Sender>+00000000000</Sender>
-				///		</Message>
-				///		<Message>
-				///			<Recepients>
-				///				<string>+00000000000</string>
-				///				<string>+00000000001</string>
-				///				<string>+00000000002</string>
-				///			</Recepients>
-				///			<Body>Message Text</Body>
-				///			<IsIncoming>false</IsIncoming>
-				///			<IsRead>true</IsRead>
-				///			<Attachments/>
-				///			<LocalTimestamp>131329488070946809</LocalTimestamp>
-				///			<Sender/>
-				///		</Message>
-				///	</ArrayOfMessage>
-
-				MSXML2::IXMLDOMElementPtr RootNode = XmlDoc->GetdocumentElement();
-				if (RootNode) {
-					if (EqualStr( RootNode->tagName, L"ArrayOfMessage" )) {
-
-						MSXML2::IXMLDOMNodeListPtr NodeList = RootNode->GetchildNodes();
-						if (NodeList) {
-
-							for (long i = 0; i < NodeList->length; i++) {
-
-								MSXML2::IXMLDOMElementPtr MsgNode = NodeList->item[i];
-								if (MsgNode) {
-
-									if (EqualStr( MsgNode->tagName, L"Message" )) {
-
-										MSXML2::IXMLDOMNodeListPtr nodes;
-										FILETIME Timestamp;
-										bool bIncoming = false, bRead = false;
-										BSTR bstrBody = NULL;
-										std::vector<_bstr_t> PhoneNoList;
-
-										// IsIncoming
-										nodes = MsgNode->getElementsByTagName( L"IsIncoming" );
-										assert( nodes );
-										if (nodes) {
-											assert( nodes->length == 1 );
-											if (nodes->length > 0) {
-												BSTR bstr = L"";
-												nodes->item[0]->get_text( &bstr );
-												bIncoming = EqualStr( bstr, L"true" );
-											}
-											nodes.Release();
-										}
-
-										// IsRead
-										nodes = MsgNode->getElementsByTagName( L"IsRead" );
-										assert( nodes );
-										if (nodes) {
-											assert( nodes->length == 1 );
-											if (nodes->length > 0) {
-												BSTR bstr = L"";
-												nodes->item[0]->get_text( &bstr );
-												bRead = EqualStr( bstr, L"true" );
-											}
-											nodes.Release();
-										}
-
-										// Body
-										nodes = MsgNode->getElementsByTagName( L"Body" );
-										assert( nodes );
-										if (nodes) {
-											assert( nodes->length == 1 );
-											if (nodes->length > 0)
-												nodes->item[0]->get_text( &bstrBody );
-											nodes.Release();
-										}
-
-										// Timestamp
-										nodes = MsgNode->getElementsByTagName( L"LocalTimestamp" );
-										assert( nodes );
-										if (nodes) {
-											assert( nodes->length == 1 );
-											if (nodes->length == 1) {
-												BSTR bstr = L"";
-												nodes->item[0]->get_text( &bstr );
-												StrToInt64Ex( bstr, STIF_DEFAULT, (PLONGLONG)&Timestamp );
-											}
-											nodes.Release();
-										}
-
-										// PhoneNo
-										if (bIncoming) {
-
-											nodes = MsgNode->getElementsByTagName( L"Sender" );
-											assert( nodes );
-											if (nodes) {
-												assert( nodes->length == 1 );						/// Always one sender
-												if (nodes->length == 1) {
-													BSTR bstrPhoneNo = NULL;
-													nodes->item[0]->get_text( &bstrPhoneNo );
-													PhoneNoList.push_back( bstrPhoneNo );
-												}
-												nodes.Release();
-											}
-
-										} else {
-
-											nodes = MsgNode->getElementsByTagName( L"Recepients" );
-											assert( nodes );
-											if (nodes) {
-												MSXML2::IXMLDOMNodeListPtr nodes2 = nodes->item[0]->GetchildNodes();
-												assert( nodes2 );
-												for (long j = 0; j < nodes2->length; j++) {			/// Multiple receipients
-													BSTR bstrPhoneNo;
-													nodes2->item[j]->get_text( &bstrPhoneNo );
-													PhoneNoList.push_back( bstrPhoneNo );
-												}
-												nodes.Release();
-											}
-										}
-
-										// Collect
-										if (bstrBody && *bstrBody && !PhoneNoList.empty()) {
-											SMS sms;
-											sms.Timestamp = Timestamp;
-											sms.IsIncoming = bIncoming;
-											sms.IsRead = bRead;
-											sms.Text = bstrBody;
-											sms.PhoneNo = PhoneNoList;
-											SmsList.push_back( sms );
-										}
-									}
-								}
-							}
-
-							// Remove duplicates
-							SmsList.erase( std::unique( SmsList.begin(), SmsList.end() ), SmsList.end() );
-						}
-
+	LPSTR psz = NULL;
+	if (pszFile && *pszFile) {
+		HANDLE h = CreateFile( pszFile, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL );
+		if (h != INVALID_HANDLE_VALUE) {
+			ULONG iBufSize = GetFileSize( h, NULL );
+			if (iBufSize != INVALID_FILE_SIZE) {
+				if ((psz = (LPSTR)HeapAlloc( GetProcessHeap(), 0, iBufSize + 1 )) != NULL) {
+					DWORD dwBytes;
+					if (ReadFile( h, psz, iBufSize, &dwBytes, NULL )) {
+						psz[dwBytes] = ANSI_NULL;
+						// Success
 					} else {
-						hr = RPC_E_INVALID_DATA;
+						HeapFree( GetProcessHeap(), 0, psz );
+						psz = NULL;
 					}
 				}
-			} else {
-				hr = HRESULT_FROM_WIN32( ERROR_INVALID_DATA );
 			}
+			CloseHandle( h );
 		}
-
-	} catch (HRESULT hr2) {
-		hr = hr2;
-	} catch (...) {
-		hr = E_UNEXPECTED;
 	}
-
-	return hr;
+	return psz;
 }
 
 
+//!++ "contacts+message backup" format
+/// <ArrayOfMessage ...>
+///		<Message>
+///			<Recepients/>
+///			<Body>Message Text</Body>
+///			<IsIncoming>true</IsIncoming>
+///			<IsRead>true</IsRead>
+///			<Attachments/>
+///			<LocalTimestamp>131329631293736951</LocalTimestamp>
+///			<Sender>+00000000000</Sender>
+///		</Message>
+///		<Message>
+///			<Recepients>
+///				<string>+00000000000</string>
+///				<string>+00000000001</string>
+///				<string>+00000000002</string>
+///			</Recepients>
+///			<Body>Message Text</Body>
+///			<IsIncoming>false</IsIncoming>
+///			<IsRead>true</IsRead>
+///			<Attachments/>
+///			<LocalTimestamp>131329488070946809</LocalTimestamp>
+///			<Sender/>
+///		</Message>
+///	</ArrayOfMessage>
 
-//++ Write_SMSBR
-HRESULT Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList, _In_opt_ WCHAR **ppszComment )
+//++ Read_CMBK
+ULONG Read_CMBK( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
 {
-	HRESULT hr = S_OK;
+	ULONG err = ERROR_SUCCESS;
 
 	if (!pszFile || !*pszFile)
-		return E_INVALIDARG;
+		return ERROR_INVALID_PARAMETER;
 
 	try {
 
-		/// <smses count = "2" backup_set = "cb081d84-aca6-4a12-ab0d-30cfdcf1891f" backup_date = "1488996424918">
-		/// 	<sms protocol = "0" address = "+40000000000" date = "1488572656975" type = "1" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "+40770000053" read = "1" status = "-1" locked = "0" date_sent = "1488572650000" readable_date = "Mar 3, 2017 22:24:16" contact_name = "First Last Name" / >
-		/// 	<sms protocol = "0" address = "+40000000000" date = "1488572942710" type = "2" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "null" read = "1" status = "-1" locked = "0" date_sent = "0" readable_date = "Mar 3, 2017 22:29:02" contact_name = "First Last Name" / >
-		/// </smses>
+		CHAR szFileA[MAX_PATH];
+		WideCharToMultiByte( CP_ACP, 0, pszFile, -1, szFileA, ARRAYSIZE( szFileA ), NULL, NULL );
+		rapidxml::file<> FileObj( szFileA );
 
-		IXMLDOMDocument2Ptr XmlDoc;
-		hr = XmlDoc.CreateInstance( _T( "msxml2.domdocument" ) );
-		if (SUCCEEDED( hr )) {
+		rapidxml::xml_document<> Doc;
+		Doc.parse<0>( FileObj.data() );
 
-			WCHAR szBuf[128];
-			VARIANT vtTemp;
-			vtTemp.vt = VT_I2;
-			vtTemp.iVal = MSXML2::NODE_ELEMENT;
+		rapidxml::xml_node<> *Root = Doc.first_node( "ArrayOfMessage" );
+		if (Root) {
 
-			XmlDoc->appendChild( XmlDoc->createProcessingInstruction( L"xml", L"version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"" ) );
-			XmlDoc->appendChild( XmlDoc->createProcessingInstruction( L"xml-stylesheet", L"type=\"text/xsl\" href=\"sms.xsl\"" ) );
-			if (ppszComment) {
-				for (int i = 0; ppszComment[i]; i++)
-					XmlDoc->appendChild( XmlDoc->createComment( ppszComment[i] ) );
-			} else {
-				XmlDoc->appendChild( XmlDoc->createComment( L" Generated by sms_w2a " ) );
-				XmlDoc->appendChild( XmlDoc->createComment( L" https://github.com/negrutiu/sms_w2a " ) );
-			}
+			for (auto n = Root->first_node( "Message", 0, false ); n; n = n->next_sibling( "Message", 0, false )) {
 
-			// Root node
-			MSXML2::IXMLDOMNodePtr RootNode;
-			RootNode = XmlDoc->createNode( vtTemp, L"smses", L"" );
+				rapidxml::xml_node<> *NodeBody = n->first_node( "Body", 0, false );
+				rapidxml::xml_node<> *NodeIn = n->first_node( "IsIncoming", 0, false );
+				rapidxml::xml_node<> *NodeRead = n->first_node( "IsRead", 0, false );
+				rapidxml::xml_node<> *NodeTime = n->first_node( "LocalTimestamp", 0, false );
+				rapidxml::xml_node<> *NodeFrom = n->first_node( "Sender", 0, false );
+				rapidxml::xml_node<> *NodeTo = n->first_node( "Recepients", 0, false );
 
-			SYSTEMTIME st;
-			FILETIME ft;
-			GetSystemTime( &st );
-			SystemTimeToFileTime( &st, &ft );
-			time_t tm = FILETIME_to_POSIXms( ft );
-			StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%I64u", tm );
-			RootNode->attributes->setNamedItem( XmlDoc->createAttribute( L"backup_date" ) );
-			RootNode->attributes->getNamedItem( L"backup_date" )->text = szBuf;
+				if (NodeIn && NodeBody) {
+					
+					SMS sms;
 
-			UUID uuid;
-			RPC_WSTR szuuid = NULL;
-			UuidCreate( &uuid );
-			UuidToString( &uuid, &szuuid );
-			RootNode->attributes->setNamedItem( XmlDoc->createAttribute( L"backup_set" ) );
-			RootNode->attributes->getNamedItem( L"backup_set" )->text = (LPCWSTR)szuuid;
-			RpcStringFree( &szuuid );
+					sms.IsIncoming = EqualStrA( NodeIn->value(), "true" );
+					sms.Text = NodeBody->value();
+					sms.Text.StripLF();
+					sms.IsRead = NodeRead ? EqualStrA( NodeRead->value(), "true" ) : true;
+					
+					if (NodeTime) {
+						StrToInt64ExA( NodeTime->value(), STIF_DEFAULT, (PLONGLONG)&sms.Timestamp );
+					} else {
+						sms.Timestamp.dwHighDateTime = sms.Timestamp.dwLowDateTime = 0;
+					}
 
-			/// NOTES
-			///   Outgoing messages may have multiple recipients!
-			///   E.g. a message sent to two contacts will count as two messages
-			ULONG iCount = 0;
-			for (auto it = SmsList.begin(); it != SmsList.end(); ++it)
-				iCount += (ULONG)it->PhoneNo.size();
-			StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%u", iCount );
-			RootNode->attributes->setNamedItem( XmlDoc->createAttribute( L"count" ) );
-			RootNode->attributes->getNamedItem( L"count" )->text = szBuf;
+					if (sms.IsIncoming && NodeFrom) {
 
-			XmlDoc->appendChild( RootNode );
+						sms.PhoneNo.push_back( NodeFrom->value() );
 
-			// SMS nodes
-			for (auto it = SmsList.begin(); it != SmsList.end(); ++it) {
+					} else if (!sms.IsIncoming && NodeTo) {
 
-				/// Outgoing message may have multiple recipients
-				/// "Clone" the same message for each contact
-				for (auto itPhoneNo = it->PhoneNo.begin(); itPhoneNo != it->PhoneNo.end(); ++itPhoneNo) {
+						/// Multiple recepients
+						for (auto to = NodeTo->first_node( "string", 0, false ); to; to = to->next_sibling( "string", 0, false ))
+							sms.PhoneNo.push_back( to->value() );
 
-					MSXML2::IXMLDOMNodePtr MsgNode = XmlDoc->createNode( vtTemp, L"sms", L"" );
+					} else {
+						/// Malformed/Incomplete node
+						continue;
+					}
 
-					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"protocol" ) );
-					MsgNode->attributes->getNamedItem( L"protocol" )->text = L"0";
-
-					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"address" ) );
-					MsgNode->attributes->getNamedItem( L"address" )->text = *itPhoneNo;
-
-					time_t tm = FILETIME_to_POSIXms( it->Timestamp );
-					StringCchPrintfW( szBuf, ARRAYSIZE( szBuf ), L"%I64u", tm );
-					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"date" ) );
-					MsgNode->attributes->getNamedItem( L"date" )->text = szBuf;
-
-					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"type" ) );
-					MsgNode->attributes->getNamedItem( L"type" )->text = it->IsIncoming ? L"1" : L"2";
-
-					///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"subject" ) );
-					///MsgNode->attributes->getNamedItem( L"subject" )->text = L"null";
-
-					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"body" ) );
-					MsgNode->attributes->getNamedItem( L"body" )->text = it->Text;
-
-					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"read" ) );
-					MsgNode->attributes->getNamedItem( L"read" )->text = it->IsRead ? L"1" : L"0";
-
-					///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"date_sent" ) );
-					///MsgNode->attributes->getNamedItem( L"date_sent" )->text = L"";
-
-					FileTimeToSystemTime( &it->Timestamp, &st );
-					StringCchPrintf( szBuf, ARRAYSIZE( szBuf ), _T( "%hu/%02hu/%02hu %02hu:%02hu:%02hu" ), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
-					MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"readable_date" ) );
-					MsgNode->attributes->getNamedItem( L"readable_date" )->text = szBuf;
-
-					///MsgNode->attributes->setNamedItem( XmlDoc->createAttribute( L"contact_name" ) );
-					///MsgNode->attributes->getNamedItem( L"contact_name" )->text = L"";
-
-					RootNode->appendChild( MsgNode );
+					SmsList.push_back( sms );
 				}
 			}
 
-			// Make sure the output file is not read-only. MSXML won't like it..
-			DWORD attr = GetFileAttributes( pszFile );
-			if (attr & FILE_ATTRIBUTE_READONLY)
-				SetFileAttributes( pszFile, attr & ~FILE_ATTRIBUTE_READONLY );
+			// Remove duplicates
+			SmsList.erase( std::unique( SmsList.begin(), SmsList.end() ), SmsList.end() );
 
-			// Save
-			_variant_t varXml( pszFile );
-			hr = XmlDoc->save( varXml );
+		} else {
+			err = ERROR_INVALID_DATA;
 		}
 
-	} catch (HRESULT hr2) {
-		hr = hr2;
+	} catch (const rapidxml::parse_error &e) {
+		UNREFERENCED_PARAMETER( e );
+		///e.what();
+		err = ERROR_INVALID_DATA;
 	} catch (...) {
-		hr = E_UNEXPECTED;
+		err = ERROR_INVALID_DATA;
 	}
 
-	return hr;
+	return err;
+}
+
+
+//++ Write_CMBK
+ULONG Write_CMBK( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList )
+{
+	ULONG err = ERROR_SUCCESS;
+
+	if (!pszFile || !*pszFile)
+		return ERROR_INVALID_PARAMETER;
+
+	try {
+
+		rapidxml::xml_document<> Doc;
+		rapidxml::xml_node<> *Root, *Node, *SubNode;
+		CHAR szBuf[255];
+
+		Node = Doc.allocate_node( rapidxml::node_declaration );
+		Node->append_attribute( Doc.allocate_attribute( "version", "1.0" ) );
+		Node->append_attribute( Doc.allocate_attribute( "encoding", "UTF-8" ) );
+		Node->append_attribute( Doc.allocate_attribute( "standalone", "yes" ) );
+		Doc.append_node( Node );
+
+		SYSTEMTIME st;
+		GetLocalTime( &st );
+		StringCchPrintfA(
+			szBuf, ARRAYSIZE( szBuf ),
+			" File created by %s on %hu/%02hu/%02hu %02hu:%02hu:%02hu ",
+			g_szAppName,
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond
+		);
+		Doc.append_node( Doc.allocate_node( rapidxml::node_comment, "", Doc.allocate_string( szBuf ) ) );
+		Doc.append_node( Doc.allocate_node( rapidxml::node_comment, "", " " SMS_APP_LINK " " ) );
+
+		// Root node
+		Root = Doc.allocate_node( rapidxml::node_element, "ArrayOfMessage" );
+		Doc.append_node( Root );
+
+		// SMS nodes
+		for (auto it = SmsList.begin(); it != SmsList.end(); ++it) {
+
+			Root->append_node( (Node = Doc.allocate_node( rapidxml::node_element, "Message" )) );
+
+			Node->append_node( (SubNode = Doc.allocate_node( rapidxml::node_element, "Recepients" )) );
+			if (!it->IsIncoming) {
+				for (auto to = it->PhoneNo.begin(); to != it->PhoneNo.end(); to++)
+					SubNode->append_node( Doc.allocate_node( rapidxml::node_element, "string", *to ) );
+			}
+
+			Node->append_node( Doc.allocate_node( rapidxml::node_element, "Body", it->Text ) );
+			Node->append_node( Doc.allocate_node( rapidxml::node_element, "IsIncoming", it->IsIncoming ? "true" : "false" ) );
+			Node->append_node( Doc.allocate_node( rapidxml::node_element, "IsRead", it->IsRead ? "true" : "false" ) );
+			Node->append_node( Doc.allocate_node( rapidxml::node_element, "Attachments" ) );
+
+			StringCchPrintfA( szBuf, ARRAYSIZE( szBuf ), "%I64u", it->Timestamp );
+			Node->append_node( Doc.allocate_node( rapidxml::node_element, "LocalTimestamp", Doc.allocate_string( szBuf ) ) );
+
+			Node->append_node( Doc.allocate_node( rapidxml::node_element, "Sender", it->IsIncoming ? (it->PhoneNo.empty() ? "" : it->PhoneNo.front()) : "" ) );
+		}
+
+		// xml -> File
+		CHAR szFileA[MAX_PATH];
+		WideCharToMultiByte( CP_UTF8, 0, pszFile, -1, szFileA, ARRAYSIZE( szFileA ), NULL, NULL );
+		std::ofstream fout( szFileA );
+		if (!fout.bad()) {
+			rapidxml::print( std::ostream_iterator<char>( fout ), Doc, 0 );
+			fout.close();
+		}
+
+	} catch (const rapidxml::parse_error &e) {
+		UNREFERENCED_PARAMETER( e );
+		///e.what();
+		err = ERROR_INVALID_DATA;
+	} catch (...) {
+		err = ERROR_INVALID_DATA;
+	}
+
+	return err;
+}
+
+
+//!++ "SMS Backup & Restore" format
+/// <smses count = "2" backup_set = "cb081d84-aca6-4a12-ab0d-30cfdcf1891f" backup_date = "1488996424918">
+/// 	<sms protocol = "0" address = "+40000000000" date = "1488572656975" type = "1" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "+40770000053" read = "1" status = "-1" locked = "0" date_sent = "1488572650000" readable_date = "Mar 3, 2017 22:24:16" contact_name = "First Last Name" / >
+/// 	<sms protocol = "0" address = "+40000000000" date = "1488572942710" type = "2" subject = "null" body = "Message Text" toa = "null" sc_toa = "null" service_center = "null" read = "1" status = "-1" locked = "0" date_sent = "0" readable_date = "Mar 3, 2017 22:29:02" contact_name = "First Last Name" / >
+/// </smses>
+
+
+//++ Read_SMSBR
+ULONG Read_SMSBR( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
+{
+	ULONG err = ERROR_SUCCESS;
+
+	if (!pszFile || !*pszFile)
+		return ERROR_INVALID_PARAMETER;
+
+	try {
+
+		CHAR szFileA[MAX_PATH];
+		WideCharToMultiByte( CP_ACP, 0, pszFile, -1, szFileA, ARRAYSIZE( szFileA ), NULL, NULL );
+		rapidxml::file<> FileObj( szFileA );
+
+		rapidxml::xml_document<> Doc;
+		Doc.parse<0>( FileObj.data() );
+
+		rapidxml::xml_node<> *Root = Doc.first_node( "smses" );
+		if (Root) {
+
+			for (auto n = Root->first_node( "sms" ); n; n = n->next_sibling( "sms" )) {
+
+				rapidxml::xml_attribute<> *AttrAddr = n->first_attribute( "address" );
+				rapidxml::xml_attribute<> *AttrDate = n->first_attribute( "date" );
+				rapidxml::xml_attribute<> *AttrBody = n->first_attribute( "body" );
+				rapidxml::xml_attribute<> *AttrType = n->first_attribute( "type" );
+				rapidxml::xml_attribute<> *AttrRead = n->first_attribute( "read" );
+
+				if (AttrAddr && AttrDate && AttrBody && AttrType && AttrRead) {
+
+					SMS sms;
+
+					sms.PhoneNo.push_back( AttrAddr->value() );
+					sms.IsIncoming = EqualStrA( AttrType->value(), "1" );		/// Incoming=1, Outgoing=2
+					sms.IsRead = !EqualStrA( AttrRead->value(), "0" );			/// Unread=0, Read=1
+
+					time_t tm;
+					StrToInt64ExA( AttrDate->value(), STIF_DEFAULT, (PLONGLONG)&tm );
+					sms.Timestamp = POSIXms_to_FILETIME( tm );
+					sms.Text = AttrBody->value();
+					sms.Text.StripLF();
+
+					/// Aggregate outgoing messages sent to multiple recepients
+					if (!sms.IsIncoming &&
+						!SmsList.empty() &&
+						!SmsList.back().IsIncoming &&
+						*(PULONG64)&SmsList.back().Timestamp == *(PULONG64)&sms.Timestamp &&
+						EqualStrA( SmsList.back().Text, sms.Text ))
+					{
+						SmsList.back().PhoneNo.push_back( sms.PhoneNo.front() );
+					} else {
+						SmsList.push_back( sms );
+					}
+				}
+			}
+
+		} else {
+			err = ERROR_INVALID_DATA;
+		}
+
+	} catch (const rapidxml::parse_error &e) {
+		UNREFERENCED_PARAMETER( e );
+		///e.what();
+		err = ERROR_INVALID_DATA;
+	} catch (...) {
+		err = ERROR_INVALID_DATA;
+	}
+
+	return err;
+}
+
+
+//++ Write_SMSBR
+ULONG Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList )
+{
+	ULONG err = ERROR_SUCCESS;
+
+	if (!pszFile || !*pszFile)
+		return ERROR_INVALID_PARAMETER;
+
+	try {
+
+		rapidxml::xml_document<> Doc;
+		rapidxml::xml_node<> *Root, *Node;
+		CHAR szBuf[128];
+
+		//? "SMS Backup & Restore" expects a precise .xml layout in order to list it correctly
+		//? If conditions are not met, the converted .xml file might be displayed at the end of the backup list, with a timestamp somewhere in the 70s
+		//? However, even if the timestamp looks bad, messages *can* be restored...
+
+		//? Layout:
+		/// <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+		/// <!--File created by XXX on YYY-->
+		/// <?xml-stylesheet type="text/xsl" href="sms.xsl"?>
+		/// <smses count="xxx" backup_set = "GUID" backup_date = "1493574946759">
+		///    <sms [...] />
+		///    <sms [...] />
+		/// </smses>
+
+		//? Rules:
+		//? * The nodes "xml", comment, "xml-stylesheet", "smses" must appear in this precise order
+		//? * There must *not* be multiple comment nodes
+		//? * The comment node must *not* have additional leading whitespaces (such as "<--   File created [...]   -->"
+
+		Node = Doc.allocate_node( rapidxml::node_declaration );
+		Node->append_attribute( Doc.allocate_attribute( "version", "1.0" ) );
+		Node->append_attribute( Doc.allocate_attribute( "encoding", "UTF-8" ) );
+		Node->append_attribute( Doc.allocate_attribute( "standalone", "yes" ) );
+		Doc.append_node( Node );
+
+		SYSTEMTIME st;
+		GetLocalTime( &st );
+		StringCchPrintfA(
+			szBuf, ARRAYSIZE( szBuf ),
+			"File created by %s on %hu/%02hu/%02hu %02hu:%02hu:%02hu, %s",
+			g_szAppName,
+			st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+			SMS_APP_LINK
+		);
+		Doc.append_node( Doc.allocate_node( rapidxml::node_comment, "", Doc.allocate_string( szBuf ) ) );
+
+		Doc.append_node( Doc.allocate_node( rapidxml::node_pi, "xml-stylesheet", "type=\"text/xsl\" href=\"sms.xsl\"" ) );
+
+		// Root node
+		Root = Doc.allocate_node( rapidxml::node_element, "smses" );
+		Doc.append_node( Root );
+
+		StringCchPrintfA( szBuf, ARRAYSIZE( szBuf ), "%u", SmsCount( SmsList ) );	/// SmsCount() is aware of multiple contacts!
+		Root->append_attribute( Doc.allocate_attribute( "count", Doc.allocate_string( szBuf ) ) );
+
+		UUID uuid;
+		RPC_WSTR szuuid = NULL;
+		UuidCreate( &uuid );
+		UuidToString( &uuid, &szuuid );
+		WideCharToMultiByte( CP_UTF8, 0, (LPCWSTR)szuuid, -1, szBuf, ARRAYSIZE( szBuf ), NULL, NULL );
+		RpcStringFree( &szuuid );
+		Root->append_attribute( Doc.allocate_attribute( "backup_set", Doc.allocate_string( szBuf ) ) );
+
+		FILETIME ft;
+		GetSystemTime( &st );
+		SystemTimeToFileTime( &st, &ft );
+		time_t tm = FILETIME_to_POSIXms( ft );
+		StringCchPrintfA( szBuf, ARRAYSIZE( szBuf ), "%I64u", tm );
+		Root->append_attribute( Doc.allocate_attribute( "backup_date", Doc.allocate_string( szBuf ) ) );
+
+		// SMS nodes
+		for (auto it = SmsList.begin(); it != SmsList.end(); ++it) {
+
+			/// Outgoing message may have multiple recepients
+			/// "Clone" the same message for each contact
+			for (auto itPhoneNo = it->PhoneNo.begin(); itPhoneNo != it->PhoneNo.end(); ++itPhoneNo) {
+
+				Root->append_node( (Node = Doc.allocate_node( rapidxml::node_element, "sms" )) );
+
+				Node->append_attribute( Doc.allocate_attribute( "protocol", "0" ) );
+				Node->append_attribute( Doc.allocate_attribute( "address", *itPhoneNo ) );
+
+				time_t tm = FILETIME_to_POSIXms( it->Timestamp );
+				StringCchPrintfA( szBuf, ARRAYSIZE( szBuf ), "%I64u", tm );
+				Node->append_attribute( Doc.allocate_attribute( "date", Doc.allocate_string( szBuf ) ) );
+
+				Node->append_attribute( Doc.allocate_attribute( "type", it->IsIncoming ? "1" : "2" ) );
+				Node->append_attribute( Doc.allocate_attribute( "subject", "null" ) );
+				Node->append_attribute( Doc.allocate_attribute( "body", it->Text ) );
+				Node->append_attribute( Doc.allocate_attribute( "read", it->IsRead ? "1" : "0" ) );
+				Node->append_attribute( Doc.allocate_attribute( "date_sent", "" ) );
+
+				FileTimeToSystemTime( &it->Timestamp, &st );
+				StringCchPrintfA( szBuf, ARRAYSIZE( szBuf ), "%hu/%02hu/%02hu %02hu:%02hu:%02hu", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond );
+				Node->append_attribute( Doc.allocate_attribute( "readable_date", Doc.allocate_string( szBuf ) ) );
+			}
+		}
+
+		// xml -> File
+		CHAR szFileA[MAX_PATH];
+		WideCharToMultiByte( CP_UTF8, 0, pszFile, -1, szFileA, ARRAYSIZE( szFileA ), NULL, NULL );
+		std::ofstream fout( szFileA );
+		if (!fout.bad()) {
+			rapidxml::print(
+				std::ostream_iterator<char>( fout ),
+				Doc,
+				rapidxml::print_no_surrogate_expansion		/// Don't expand the special emoji characters used by "SMS Backup & Restore"
+			);
+			fout.close();
+		}
+
+	} catch (const rapidxml::parse_error &e) {
+		UNREFERENCED_PARAMETER( e );
+		///e.what();
+		err = ERROR_INVALID_DATA;
+	} catch (...) {
+		err = ERROR_INVALID_DATA;
+	}
+
+	return err;
 }
