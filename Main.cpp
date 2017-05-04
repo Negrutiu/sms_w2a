@@ -6,14 +6,15 @@
 
 
 HINSTANCE g_hInst = NULL;
+ULONG g_iInputType = 0;	
 
 
 //+ Definitions
 #define PROP_HACCEL _T( "m_hAccel" )
 
 void OnButtonAbout( _In_ HWND hDlg );
-void OnButtonBrowseCMBK( _In_ HWND hDlg );
-void OnButtonConvertW2A( _In_ HWND hDlg );
+void OnButtonBrowse( _In_ HWND hDlg );
+void OnButtonConvert( _In_ HWND hDlg );
 
 
 //++ TranslateAcceleratorKey
@@ -63,7 +64,7 @@ void GetInputFile( _In_ HWND hDlg, _Out_ TCHAR szFile[MAX_PATH] )
 	assert( hDlg && IsWindow( hDlg ) );
 	assert( szFile );
 
-	GetDlgItemText( hDlg, IDC_EDIT_CMBK, szFile, MAX_PATH );
+	GetDlgItemText( hDlg, IDC_EDIT_INPUT, szFile, MAX_PATH );
 
 	StrTrim( szFile, _T( " \r\n" ) );
 	PathUnquoteSpaces( szFile );
@@ -78,7 +79,25 @@ void SetOutputFile( _In_ HWND hDlg )
 
 	szOutput[0] = 0;
 	GetInputFile( hDlg, szInput );
-	if (PathFileExists( szInput )) {
+	
+	ULONG iCount;
+	utf8string sComments;
+	SmsGetFileSummary( szInput, g_iInputType, iCount, sComments );
+	if (g_iInputType != 1 && g_iInputType != 2) {
+
+		SetDlgItemText( hDlg, IDC_EDIT_INFO, _T( "Unknown file format" ) );
+		SetDlgItemText( hDlg, IDC_EDIT_OUTPUT, _T( "" ) );
+
+		EnableWindow( GetDlgItem( hDlg, IDC_BUTTON_CONVERT ), FALSE );
+
+	} else {
+
+		CHAR szFormat[128], szMsgCount[50];
+		StringCchPrintfA( szFormat, ARRAYSIZE( szFormat ), "Format: \"%hs\"\r\n", g_iInputType == 1 ? "contact+messages backup" : "SMS Backup & Restore" );
+		StringCchPrintfA( szMsgCount, ARRAYSIZE( szMsgCount ), "Messages: %u\r\n", iCount );
+		sComments.insert( 0, szMsgCount );
+		sComments.insert( 0, szFormat );
+		SetDlgItemTextA( hDlg, IDC_EDIT_INFO, sComments );
 
 		StringCchCopy( szOutput, ARRAYSIZE( szOutput ), szInput );
 		PathRemoveExtension( szOutput );
@@ -90,10 +109,11 @@ void SetOutputFile( _In_ HWND hDlg )
 		StringCchPrintf( szSuffix, ARRAYSIZE( szSuffix ), _T( "-%hu%02hu%02hu" ), st.wYear, st.wMonth, st.wDay );
 		StringCchCat( szOutput, ARRAYSIZE( szOutput ), szSuffix );
 
-		PathAddExtension( szOutput, _T( ".xml" ) );
-	}
+		PathAddExtension( szOutput, g_iInputType == 1 ? _T( ".xml" ) : _T( ".msg" ) );
+		SetDlgItemText( hDlg, IDC_EDIT_OUTPUT, szOutput );
 
-	SetDlgItemText( hDlg, IDC_EDIT_SMSBR, szOutput );
+		EnableWindow( GetDlgItem( hDlg, IDC_BUTTON_CONVERT ), TRUE );
+	}
 }
 
 
@@ -227,15 +247,15 @@ INT_PTR CALLBACK DialogProc( __in HWND hDlg, __in UINT iMsg, __in WPARAM wParam,
 					OnButtonAbout( hDlg );
 					break;
 
-				case IDC_BUTTON_CMBK:
-					OnButtonBrowseCMBK( hDlg );
+				case IDC_BUTTON_BROWSE:
+					OnButtonBrowse( hDlg );
 					break;
 
-				case IDC_BUTTON_W2A:
-					OnButtonConvertW2A( hDlg );
+				case IDC_BUTTON_CONVERT:
+					OnButtonConvert( hDlg );
 					break;
 
-				case IDC_EDIT_CMBK:
+				case IDC_EDIT_INPUT:
 					if (HIWORD( wParam ) == EN_KILLFOCUS)
 						SetOutputFile( hDlg );		/// Input filename -> Output filename
 					break;
@@ -247,6 +267,16 @@ INT_PTR CALLBACK DialogProc( __in HWND hDlg, __in UINT iMsg, __in WPARAM wParam,
 		{
 			if (wParam == IDM_ABOUT)
 				SendMessage( hDlg, WM_COMMAND, IDM_ABOUT, 0 );
+			break;
+		}
+
+		case WM_CTLCOLOREDIT:
+		{
+			if (GetDlgCtrlID( (HWND)lParam ) == IDC_EDIT_INFO) {
+				HDC dc = (HDC)wParam;
+				SetTextColor( dc, GetSysColor( COLOR_GRAYTEXT ) );
+				return (INT_PTR)GetSysColorBrush( COLOR_WINDOW );
+			}
 			break;
 		}
 	}
@@ -272,8 +302,8 @@ void OnButtonAbout( _In_ HWND hDlg )
 }
 
 
-//++ OnButtonBrowseCMBK
-void OnButtonBrowseCMBK( _In_ HWND hDlg )
+//++ OnButtonBrowse
+void OnButtonBrowse( _In_ HWND hDlg )
 {
 	TCHAR szInput[MAX_PATH];
 	GetInputFile( hDlg, szInput );
@@ -290,14 +320,14 @@ void OnButtonBrowseCMBK( _In_ HWND hDlg )
 	ofn.Flags = OFN_ENABLESIZING | OFN_FILEMUSTEXIST | OFN_LONGNAMES;
 
 	if (GetOpenFileName( &ofn )) {
-		SetDlgItemText( hDlg, IDC_EDIT_CMBK, szInput );
+		SetDlgItemText( hDlg, IDC_EDIT_INPUT, szInput );
 		SetOutputFile( hDlg );		/// Input filename -> Output filename
 	}
 }
 
 
-//++ OnButtonConvertW2A
-void OnButtonConvertW2A( _In_ HWND hDlg )
+//++ OnButtonConvert
+void OnButtonConvert( _In_ HWND hDlg )
 {
 	HRESULT hr;
 
@@ -305,7 +335,7 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 	szOutput[0] = 0;
 
 	GetInputFile( hDlg, szInput );
-	GetDlgItemText( hDlg, IDC_EDIT_SMSBR, szOutput, ARRAYSIZE( szOutput ) );
+	GetDlgItemText( hDlg, IDC_EDIT_OUTPUT, szOutput, ARRAYSIZE( szOutput ) );
 
 	if (!*szInput) {
 		UtlMessageBox( hDlg, MB_OK, MAKEINTRESOURCE( IDI_MAIN ), DialogTitle( hDlg ), _T( ":/\nHow about choosing a file..." ), g_hInst );
@@ -315,32 +345,23 @@ void OnButtonConvertW2A( _In_ HWND hDlg )
 	if (!PathFileExists( szOutput ) ||
 		UtlMessageBox( hDlg, MB_YESNO | MB_ICONQUESTION, NULL, DialogTitle( hDlg ), _T( "\"%s\" already exists\nOverwrite?" ), PathFindFileName( szOutput ) ) == IDYES)
 	{
-
 		SMS_LIST SmsList;
-		hr = Read_CMBK( szInput, SmsList );
-		//hr = Read_SMSBR( szInput, SmsList );
-		if (SUCCEEDED( hr )) {
-
-			/// Sort chronologically
-			//SmsList.sort( std::greater<SMS>() );		/// Newest messages first (CMBK)
-			SmsList.sort( std::less<SMS>() );			/// Oldest messages first (SMSBR)
-
-			///for (auto it = SmsList.begin(); it != SmsList.end(); it++) {
-			///	SYSTEMTIME st;
-			///	FileTimeToSystemTime( &it->Timestamp, &st );
-			///	UtlDebugString(
-			///		_T( "[%hu/%02hu/%02hu %02hu:%02hu:%02hu.%03hu] %s %s %ws \"%ws\"\n" ),
-			///		st.wYear, st.wMonth, st.wDay,
-			///		st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-			///		it->IsIncoming ? _T( "IN" ) : _T( "OUT" ),
-			///		it->IsRead ? _T( "Read" ) : _T( "Unread" ),
-			///		it->PhoneNo.GetBSTR(),
-			///		it->Text.GetBSTR()
-			///	);
-			///}
-
-			//hr = Write_CMBK( szOutput, SmsList );
-			hr = Write_SMSBR( szOutput, SmsList );
+		if (g_iInputType == 1) {
+			// CMBK -> SMSBR
+			hr = Read_CMBK( szInput, SmsList );
+			if (SUCCEEDED( hr )) {
+				SmsList.sort( std::less<SMS>() );			/// Oldest messages first (SMSBR)
+				hr = Write_SMSBR( szOutput, SmsList );
+			}
+		} else if (g_iInputType == 2) {
+			// SMSBR -> CMBK
+			hr = Read_SMSBR( szInput, SmsList );
+			if (SUCCEEDED( hr )) {
+				SmsList.sort( std::greater<SMS>() );		/// Newest messages first (CMBK)
+				hr = Write_CMBK( szOutput, SmsList );
+			}
+		} else {
+			hr = E_INVALIDARG;
 		}
 
 		// Message
