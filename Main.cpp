@@ -294,13 +294,17 @@ void OnButtonAbout( _In_ HWND hDlg )
 	TCHAR szDescription[255];
 	TCHAR szComments[255];
 	TCHAR szCopyright[255];
+
+	LPCTSTR pszCredits =
+		_T( "Credit goes to Grégoire Pailler for his wonderful \"contacts+message backup\" hash reverse engineering.\n" )
+		_T( "https://github.com/gpailler/Android2Wp_SMSConverter/blob/master/converter.py" );
 	
 	UtlReadVersionString( NULL, _T( "FileVersion" ), szVersion, ARRAYSIZE( szVersion ) );
 	UtlReadVersionString( NULL, _T( "FileDescription" ), szDescription, ARRAYSIZE( szDescription ) );
 	UtlReadVersionString( NULL, _T( "CompanyName" ), szComments, ARRAYSIZE( szComments ) );
 	UtlReadVersionString( NULL, _T( "LegalCopyright" ), szCopyright, ARRAYSIZE( szCopyright ) );
 	
-	UtlMessageBox( hDlg, MB_OK, MAKEINTRESOURCE( IDI_MAIN ), DialogTitle( hDlg ), _T( "%s\n%s\n\n%s\n%s" ), g_hInst, szDescription, szVersion, szComments, szCopyright );
+	UtlMessageBox( hDlg, MB_OK, MAKEINTRESOURCE( IDI_MAIN ), DialogTitle( hDlg ), _T( "%s\n%s\n\n%s\n%s\n\n%s" ), g_hInst, szDescription, szVersion, szComments, szCopyright, pszCredits );
 }
 
 
