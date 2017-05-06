@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--File created by sms_w2a 2.0 on 2017/05/01 09:58:37 [https://github.com/negrutiu/sms_w2a]-->
+<?xml-stylesheet type="text/xsl" href="sms.xsl"?>
+<smses count="2" backup_set="8ca2936c-6737-4d7c-8be2-6c83981afb75" backup_date="1493621917414">
+	<sms protocol="0" address="+40000000001" date="1429719471788" type="2" subject="null" body="😊 Some diacritics <ĂăÂâÎîȘșȚț> 😊" read="1" date_sent="" readable_date="2015/04/22 16:17:51"/>
+	<sms protocol="0" address="+40000000001" date="1432619212939" type="1" subject="null" body="❤💑❤" read="1" date_sent="" readable_date="2015/05/26 05:46:52"/>
+</smses>
