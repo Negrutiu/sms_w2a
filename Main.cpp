@@ -87,6 +87,7 @@ void SetOutputFile( _In_ HWND hDlg )
 
 		SetDlgItemText( hDlg, IDC_EDIT_INFO, _T( "Unknown file format" ) );
 		SetDlgItemText( hDlg, IDC_EDIT_OUTPUT, _T( "" ) );
+		SetDlgItemText( hDlg, IDC_BUTTON_CONVERT, _T( "Convert" ) );
 
 		EnableWindow( GetDlgItem( hDlg, IDC_BUTTON_CONVERT ), FALSE );
 
@@ -112,6 +113,7 @@ void SetOutputFile( _In_ HWND hDlg )
 		PathAddExtension( szOutput, g_iInputType == 1 ? _T( ".xml" ) : _T( ".msg" ) );
 		SetDlgItemText( hDlg, IDC_EDIT_OUTPUT, szOutput );
 
+		SetDlgItemText( hDlg, IDC_BUTTON_CONVERT, g_iInputType == 1 ? _T( "Convert to Android" ) : _T( "Convert to Windows" ) );
 		EnableWindow( GetDlgItem( hDlg, IDC_BUTTON_CONVERT ), TRUE );
 	}
 }
