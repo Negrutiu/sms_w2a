@@ -449,11 +449,11 @@ ULONG Compute_CMBK_Hash( _In_ LPCTSTR pszFile, _Out_ utf8string &Hash )
 
 				DWORD iParam = CRYPT_MODE_CBC;
 				CryptSetKeyParam( hKey, KP_MODE, (LPBYTE)&iParam, 0 );
-				//? NOTE: WinCrypt is using PKCS#1 padding by default (which is functionally equivalent to PKCS#7 (and PKCS#5) for AES128)
+				//? NOTE: WinCrypt is already using PKCS#1 padding by default (which is functionally equivalent to PKCS#7 (and PKCS#5) for AES128)
 				///iParam = PKCS5_PADDING;
 				///CryptSetKeyParam( hKey, KP_PADDING, (LPBYTE)&iParam, 0 );
 
-				if (CryptSetKeyParam( hKey, KP_IV, (LPBYTE)&AesIV, 0 )) {		/// Set the initialization vector
+				if (CryptSetKeyParam( hKey, KP_IV, (LPBYTE)&AesIV, 0 )) {		/// Initialization vector
 
 					BYTE aes128[64];
 					ULONG aes128size = lstrlenA( base64_sha2 );
