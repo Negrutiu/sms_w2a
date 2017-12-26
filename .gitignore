@@ -1,6 +1,7 @@
-Debug-*
-Release-*
-ipch
+Debug-*/
+Release-*/
+.vs/
+ipch/
 
 *.sdf
 *.opensdf
