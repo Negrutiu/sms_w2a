@@ -32,6 +32,7 @@
 #include <CommCtrl.h>
 #include <CommDlg.h>
 #include <assert.h>
+#include <shellapi.h>
 #include <Shlwapi.h>
 
 #include <strsafe.h>

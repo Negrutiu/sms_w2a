@@ -34,7 +34,8 @@ FONT 8, "MS Shell Dlg", 400, 0, 0x1
 BEGIN
     ICON            IDI_MAIN,IDC_STATIC,8,15,20,20
     LTEXT           "Input file formats:",IDC_STATIC,36,12,312,8
-    LTEXT           "• Windows Phone: ""contacts+message backup"" (*.msg)\n• Android Phone: ""SMS Backup & Restore"" (*.xml)\n• Symbian Phone: ""Nokia Suite"" (*.csv)",IDC_STATIC,36,24,311,24,SS_NOPREFIX
+    CONTROL         "• Windows Phone: <a>contacts+message backup</a> (*.msg)\n• Android Phone: <a>SMS Backup & Restore</a> (*.xml)\n• Symbian Phone: <a>Nokia Suite</a> exported messages (*.csv)",IDC_SYSLINK_INPUT,
+                    "SysLink",WS_TABSTOP,36,24,312,24
     EDITTEXT        IDC_EDIT_INPUT,36,54,291,14,ES_AUTOHSCROLL
     PUSHBUTTON      "...",IDC_BUTTON_BROWSE,329,54,18,14
     EDITTEXT        IDC_EDIT_INFO,36,72,291,42,ES_MULTILINE | ES_AUTOHSCROLL | NOT WS_BORDER

@@ -272,6 +272,27 @@ INT_PTR CALLBACK DialogProc( __in HWND hDlg, __in UINT iMsg, __in WPARAM wParam,
 			break;
 		}
 
+		case WM_NOTIFY:
+		{
+			switch (((LPNMHDR)lParam)->code) {
+				case NM_CLICK:
+				case NM_RETURN:
+				{
+					LPTSTR pszURL = NULL;
+					PNMLINK pNMLink = (PNMLINK)lParam;
+					switch (pNMLink->item.iLink) {
+						case 0: pszURL = L"https://www.microsoft.com/en-us/store/p/contacts-message-backup/9nblgggz57gm"; break;
+						case 1: pszURL = L"https://play.google.com/store/apps/details?id=com.riteshsahu.SMSBackupRestore"; break;
+						case 2: pszURL = L"https://en.wikipedia.org/wiki/Nokia_Suite"; break;
+					}
+					if (pszURL)
+						ShellExecute( hDlg, L"open", pszURL, NULL, NULL, SW_SHOW );
+					break;
+				}
+			}
+			break;
+		}
+
 		case WM_CTLCOLOREDIT:
 		{
 			if (GetDlgCtrlID( (HWND)lParam ) == IDC_EDIT_INFO) {
