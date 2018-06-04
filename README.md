@@ -1,6 +1,5 @@
 # sms_w2a
-Helps you transfer your SMS messages from **Windows** phone to **Android** phone, and vice versa
-Importing Nokia Suite messages is supported as well
+Helps you transfer your SMS messages from **Windows** phone to **Android** phone, and vice versa. Importing Nokia Suite messages is supported as well
 
 ## Tools
 You'll have to use specialized (free!) apps on each platform to backup and restore your messages.
