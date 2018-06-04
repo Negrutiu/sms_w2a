@@ -87,6 +87,14 @@ struct SMS {
 	utf8string Text;
 	std::vector<utf8string> PhoneNo;
 
+	void clear()
+	{
+		Timestamp.dwHighDateTime = Timestamp.dwLowDateTime = 0;
+		IsIncoming = IsRead = true;
+		Text.clear();
+		PhoneNo.clear();
+	}
+
 	bool operator==( const SMS& second ) const {
 		return
 			Timestamp.dwHighDateTime == second.Timestamp.dwHighDateTime &&
@@ -122,11 +130,13 @@ ULONG SmsCount( const SMS_LIST &SmsList );
 //+ SmsGetFileSummary
 ULONG SmsGetFileSummary(
 	_In_ LPCTSTR pszFile,
-	_Out_ ULONG &iType,					/// 0=Unknown, 1=CMBK, 2=SMSBR
+	_Out_ ULONG &iType,					/// 0=Unknown, 1=CMBK, 2=SMSBR, 3=NOKIA
 	_Out_ ULONG &iMessageCount,
 	_Out_ std::string &sComments
 );
 
+//+ SmsFormatStr
+LPCSTR SmsFormatStr( _In_ ULONG iType );
 
 //+ contacts+message backup (Windows Phone)
 /// https://www.microsoft.com/en-us/store/p/contacts-message-backup/9nblgggz57gm
@@ -141,3 +151,9 @@ ULONG Compute_CMBK_Hash( _In_ LPCTSTR pszFile, _Out_ utf8string &Hash );
 
 ULONG Read_SMSBR( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList );
 ULONG Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList );
+
+//+ Nokia Suite exported messages (Symbian)
+/// https://en.wikipedia.org/wiki/Nokia_Suite
+
+ULONG Read_NOKIA( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList );
+ULONG Write_NOKIA( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList );

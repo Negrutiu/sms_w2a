@@ -83,7 +83,7 @@ void SetOutputFile( _In_ HWND hDlg )
 	ULONG iCount;
 	utf8string sComments;
 	SmsGetFileSummary( szInput, g_iInputType, iCount, sComments );
-	if (g_iInputType != 1 && g_iInputType != 2) {
+	if (g_iInputType != 1 && g_iInputType != 2 && g_iInputType != 3) {
 
 		SetDlgItemText( hDlg, IDC_EDIT_INFO, _T( "Unknown file format" ) );
 		SetDlgItemText( hDlg, IDC_EDIT_OUTPUT, _T( "" ) );
@@ -94,7 +94,7 @@ void SetOutputFile( _In_ HWND hDlg )
 	} else {
 
 		CHAR szFormat[128], szMsgCount[50];
-		StringCchPrintfA( szFormat, ARRAYSIZE( szFormat ), "Format: \"%hs\"\r\n", g_iInputType == 1 ? "contact+messages backup" : "SMS Backup & Restore" );
+		StringCchPrintfA( szFormat, ARRAYSIZE( szFormat ), "Format: \"%hs\"\r\n", SmsFormatStr( g_iInputType ) );
 		StringCchPrintfA( szMsgCount, ARRAYSIZE( szMsgCount ), "Messages: %u\r\n", iCount );
 		sComments.insert( 0, szMsgCount );
 		sComments.insert( 0, szFormat );
@@ -110,10 +110,10 @@ void SetOutputFile( _In_ HWND hDlg )
 		StringCchPrintf( szSuffix, ARRAYSIZE( szSuffix ), _T( "-%hu%02hu%02hu" ), st.wYear, st.wMonth, st.wDay );
 		StringCchCat( szOutput, ARRAYSIZE( szOutput ), szSuffix );
 
-		PathAddExtension( szOutput, g_iInputType == 1 ? _T( ".xml" ) : _T( ".msg" ) );
+		PathAddExtension( szOutput, g_iInputType != 2 ? _T( ".xml" ) : _T( ".msg" ) );
 		SetDlgItemText( hDlg, IDC_EDIT_OUTPUT, szOutput );
 
-		SetDlgItemText( hDlg, IDC_BUTTON_CONVERT, g_iInputType == 1 ? _T( "Convert to Android" ) : _T( "Convert to Windows" ) );
+		SetDlgItemText( hDlg, IDC_BUTTON_CONVERT, g_iInputType != 2 ? _T( "Convert to Android" ) : _T( "Convert to Windows" ) );
 		EnableWindow( GetDlgItem( hDlg, IDC_BUTTON_CONVERT ), TRUE );
 	}
 }
@@ -314,8 +314,8 @@ void OnButtonBrowse( _In_ HWND hDlg )
 	TCHAR szInput[MAX_PATH];
 	GetInputFile( hDlg, szInput );
 
-	TCHAR szFilter[50];
-	memcpy( szFilter, _T( "*.msg, *.xml\0*.msg;*.xml\0*.*\0*.*\0\0" ), 34 * sizeof( TCHAR ) );
+	TCHAR szFilter[128];
+	memcpy( szFilter, _T( "*.msg, *.xml, *.csv\0*.msg;*.xml;*.csv\0*.*\0*.*\0\0" ), 47 * sizeof( TCHAR ) );
 
 	OPENFILENAME ofn = {0};
 	ofn.lStructSize = sizeof( ofn );
@@ -365,6 +365,13 @@ void OnButtonConvert( _In_ HWND hDlg )
 			if (SUCCEEDED( hr )) {
 				SmsList.sort( std::greater<SMS>() );		/// Newest messages first (CMBK)
 				hr = Write_CMBK( szOutput, SmsList );
+			}
+		} else if (g_iInputType == 3) {
+			// NOKIA -> SMSBR
+			hr = Read_NOKIA( szInput, SmsList );
+			if (SUCCEEDED( hr )) {
+				SmsList.sort( std::greater<SMS>() );		/// Newer messages first (NOKIA)
+				hr = Write_SMSBR( szOutput, SmsList );
 			}
 		} else {
 			hr = E_INVALIDARG;

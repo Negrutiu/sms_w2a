@@ -9,6 +9,7 @@
 #include "rapidxml\rapidxml_utils.hpp"
 #include "rapidxml\rapidxml_print.hpp"
 #include <wincrypt.h>
+#include "libcsv\csv.h"
 
 
 #define SMS_APP_NAME "sms_w2a"
@@ -40,7 +41,7 @@ ULONG SmsCount( const SMS_LIST &SmsList )
 //++ SmsGetFileSummary
 ULONG SmsGetFileSummary(
 	_In_ LPCTSTR pszFile,
-	_Out_ ULONG &iType,					/// 0=Unknown, 1=CMBK, 2=SMSBR
+	_Out_ ULONG &iType,					/// 0=Unknown, 1=CMBK, 2=SMSBR, 3=NOKIA
 	_Out_ ULONG &iMessageCount,
 	_Out_ std::string &sComments
 )
@@ -54,6 +55,7 @@ ULONG SmsGetFileSummary(
 	iMessageCount = 0;
 	sComments.clear();
 
+	// XML types
 	try {
 
 		CHAR szFileA[MAX_PATH];
@@ -103,7 +105,70 @@ ULONG SmsGetFileSummary(
 		err = ERROR_INVALID_DATA;
 	}
 
+	// CSV types
+	if (iType == 0) {
+
+		utf8string s;
+		if (s.LoadFromFile( pszFile ) == ERROR_SUCCESS) {
+
+			typedef struct {
+				int iCurFields;
+				ULONG iRecords;
+			} CTX;
+			CTX ctx = {0};
+
+			struct csv_parser csv;
+			csv_init( &csv, 0 );
+			if (csv_parse(
+				&csv,
+				s.c_str(), s.size(),
+				[]( void *s, size_t len, void *pParam )
+				{
+					CTX *pctx = (CTX*)pParam;
+					if (pctx->iCurFields == 0) {
+						if (len == 3 && EqualStrNA( (LPCSTR)s, "sms", 3 )) {
+							/// First field OK ("sms")
+						} else {
+							pctx->iCurFields = -1;			/// Invalidate current record
+						}
+					}
+					if (pctx->iCurFields >= 0)
+						pctx->iCurFields++;
+				},
+				[]( int ch, void *pParam )
+				{
+					CTX *pctx = (CTX*)pParam;
+					if (pctx->iCurFields == 8)			/// Valid records only
+						pctx->iRecords++;
+					pctx->iCurFields = 0;
+				},
+				&ctx ) == s.size())
+			{
+				if (ctx.iRecords > 0) {
+					iType = 3;		/// Nokia Suite CSV
+					iMessageCount = ctx.iRecords;
+				}
+
+			} else {
+				csv_strerror( csv_error( &csv ) );
+			}
+			csv_fini( &csv, NULL, NULL, NULL );
+		}
+	}
+
 	return err;
+}
+
+
+//++ SmsFormatStr
+LPCSTR SmsFormatStr( _In_ ULONG iType )
+{
+	switch (iType) {
+		case 1: return "contact+messages backup";
+		case 2: return "SMS Backup & Restore";
+		case 3: return "Nokia Suite (exported messages)";
+	}
+	return NULL;
 }
 
 
@@ -696,4 +761,148 @@ ULONG Write_SMSBR( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList )
 	}
 
 	return err;
+}
+
+
+//++ Read_NOKIA
+ULONG Read_NOKIA( _In_ LPCTSTR pszFile, _Out_ SMS_LIST& SmsList )
+{
+	ULONG err = ERROR_SUCCESS;
+
+	if (!pszFile || !*pszFile)
+		return ERROR_INVALID_PARAMETER;
+
+	utf8string s;
+	if (s.LoadFromFile( pszFile ) == ERROR_SUCCESS) {
+
+		//? Layout:
+		/// Type,Action,From,To,?,Timestamp,?,Text
+		/// "sms","RECEIVED","+0000000000","","","YYYY.MM.DD HH:mm","","Text1"
+		/// "sms","READ,RECEIVED","+0000000000","","","YYYY.MM.DD HH:mm","","Text2"
+		/// "sms","SENT","","+0000000000","","YYYY.MM.DD HH:mm","","Text3"
+
+		typedef struct {
+			int iCurFields;
+			SMS sms;
+			SMS_LIST *pSmsList;
+		} CTX;
+
+		CTX ctx;
+		ctx.iCurFields = 0;
+		ctx.pSmsList = &SmsList;
+
+		struct csv_parser csv;
+		csv_init( &csv, 0 );
+		csv_set_delim( &csv, ',' );
+
+		if (csv_parse(
+			&csv,
+			s.c_str(), s.size(),
+			//+ CSV field callback
+			[]( void *s, size_t len, void *pParam )
+			{
+				CTX *pctx = (CTX*)pParam;
+				if (pctx->iCurFields >= 0) {		/// Record is still valid
+					switch (pctx->iCurFields) {
+						case 0:
+							// "sms"
+							if (len != 3 || !EqualStrNA( (LPCSTR)s, "sms", 3 ))
+								pctx->iCurFields = -1;		/// Invalidate this record
+							break;
+						case 1:
+						{
+							// "RECEIVED", "RECEIVED,READ", "SENT"
+							utf8string s2;
+							s2.assign( (LPCSTR)s, (LPCSTR)s + len );
+
+							pctx->sms.IsRead = (StrStrA( s2.c_str(), "READ" ) != NULL);
+							pctx->sms.IsIncoming = (StrStrA( s2.c_str(), "RECEIVED" ) != NULL);
+							///pctx->sms.IsIncoming = !(StrStrA( s2.c_str(), "SENT" ) != NULL);
+							break;
+						}
+						case 2:
+						{
+							// From
+							if (pctx->sms.IsIncoming) {
+								utf8string s2;
+								s2.assign( (LPCSTR)s, (LPCSTR)s + len );
+
+								pctx->sms.PhoneNo.push_back( s2 );
+							}
+							break;
+						}
+						case 3:
+						{
+							// To
+							if (!pctx->sms.IsIncoming) {
+								utf8string s2;
+								s2.assign( (LPCSTR)s, (LPCSTR)s + len );
+
+								pctx->sms.PhoneNo.push_back( s2 );
+							}
+							break;
+						}
+						case 5:
+						{
+							// "YYYY.MM.DD HH:MM"
+							LPCSTR psz = (LPCSTR)s;
+							if (len == 16 && psz[4] == '.' && psz[7] == '.' && psz[10] == ' ' && psz[13] == ':') {
+
+								utf8string s2;
+								SYSTEMTIME st = {0};
+								st.wYear   = StrToIntA( s2.assign( psz, psz + 4 ).c_str() );
+								st.wMonth  = StrToIntA( s2.assign( psz + 5, psz + 7 ).c_str() );
+								st.wDay    = StrToIntA( s2.assign( psz + 8, psz + 10 ).c_str() );
+								st.wHour   = StrToIntA( s2.assign( psz + 11, psz + 13 ).c_str() );
+								st.wMinute = StrToIntA( s2.assign( psz + 14, psz + 16 ).c_str() );
+
+								SYSTEMTIME st2;
+								TzSpecificLocalTimeToSystemTime( NULL, &st, &st2 );
+
+								SystemTimeToFileTime( &st2, &pctx->sms.Timestamp );
+
+							} else {
+								pctx->iCurFields = -1;		/// Invalidate this record
+							}
+							break;
+						}
+						case 7:
+							// Message text
+							pctx->sms.Text.assign( (LPCSTR)s, (LPCSTR)s + len );
+							break;
+					}
+					pctx->iCurFields++;
+				}
+			},
+			//+ CSV record callback
+			[]( int ch, void *pParam )
+			{
+				CTX *pctx = (CTX*)pParam;
+
+				// Store this SMS
+				if (pctx->iCurFields == 8)
+					pctx->pSmsList->push_back( pctx->sms );
+
+				// Context cleanup
+				pctx->sms.clear();
+				pctx->iCurFields = 0;
+			},
+			&ctx ) == s.size())
+		{
+			//? Success
+		} else {
+			csv_strerror( csv_error( &csv ) );
+		}
+		csv_fini( &csv, NULL, NULL, NULL );
+	}
+
+	return err;
+}
+
+
+//++ Write_NOKIA
+ULONG Write_NOKIA( _In_ LPCTSTR pszFile, _In_ const SMS_LIST& SmsList )
+{
+	//TODO: ?
+	return ERROR_NOT_SUPPORTED;
 }

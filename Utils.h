@@ -33,6 +33,8 @@
 #define EqualStrN(psz1, psz2, len) \
 	(CompareString( 0, NORM_IGNORECASE, (psz1), (int)(len), (psz2), (int)(len)) == CSTR_EQUAL)
 
+#define EqualStrNA(psz1, psz2, len) \
+	(CompareStringA( 0, NORM_IGNORECASE, (psz1), (int)(len), (psz2), (int)(len)) == CSTR_EQUAL)
 
 //++ Dynamic functions
 
