@@ -1,3 +1,7 @@
+[![Latest Release](https://img.shields.io/badge/dynamic/json.svg?label=Latest%20Release&url=https%3A%2F%2Fapi.github.com%2Frepos%2Fnegrutiu%2Fsms_w2a%2Freleases%2Flatest&query=%24.name&colorB=orange)](../../releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/negrutiu/sms_w2a/total.svg?label=Downloads&colorB=orange)](../../releases/latest)
+[![GitHub issues](https://img.shields.io/github/issues/negrutiu/sms_w2a.svg?label=Issues)](../../issues)
+
 # sms_w2a
 Helps you transfer your SMS messages from **Windows** phone to **Android** phone, and vice versa. Importing Nokia Suite messages is supported as well
 
